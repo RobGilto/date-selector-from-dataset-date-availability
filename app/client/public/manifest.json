@@ -1,0 +1,49 @@
+{
+  "name": "Date Selector",
+  "version": "1.0.0",
+  "fullpage": false,
+  "size": {
+    "width": 2,
+    "height": 1
+  },
+  "datasetsMapping": [
+    {
+      "alias": "sampleData",
+      "dataSetId": "517ca1d7-3130-452b-926a-e4a6612212ee",
+      "fields": []
+    }
+  ],
+  "workflowMapping": [],
+  "packagesMapping": [],
+  "id": "4896fd53-0232-42d3-b31b-7be12b50e6ed",
+  "fileName": "manifest.json",
+  "collectionsMapping": [
+    {
+      "name": "nab-date-selector-settings",
+      "schema": {
+        "columns": [
+          {
+            "name": "functionId",
+            "type": "LONG"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "role": "ADMIN",
+          "actions": [
+            "READ",
+            "WRITE",
+            "DELETE"
+          ]
+        },
+        {
+          "role": "USER",
+          "actions": [
+            "READ"
+          ]
+        }
+      ]
+    }
+  ]
+}
