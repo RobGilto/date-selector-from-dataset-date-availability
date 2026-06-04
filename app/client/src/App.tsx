@@ -19,12 +19,22 @@ const IS_LOCAL =
 type SelectionMode = 'single' | 'between';
 type ViewMode = 'calendar' | 'list';
 
-interface StoredSettings {
+interface ConfigDoc {
+  type?: 'config';
   functionId?: number;
   mode?: SelectionMode;
   rangeStartFunctionId?: number;
   rangeEndFunctionId?: number;
 }
+
+interface StateDoc {
+  type: 'state';
+  singleDate?: string;
+  rangeStart?: string;
+  rangeEnd?: string;
+}
+
+type CollectionDoc = ConfigDoc | StateDoc;
 
 interface DetectedVar {
   functionId: number;
@@ -175,7 +185,8 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
 
   // Settings (refs for callbacks)
-  const docIdRef = useRef<string | null>(null);
+  const configDocIdRef = useRef<string | null>(null);
+  const stateDocIdRef = useRef<string | null>(null);
   const functionIdRef = useRef<number | null>(DEFAULT_SINGLE_FID);
   const rangeStartFidRef = useRef<number | null>(null);
   const rangeEndFidRef = useRef<number | null>(null);
@@ -280,14 +291,22 @@ export default function App() {
       const docs = (await (domo as any).post(
         `/domo/datastores/v1/collections/${COLLECTION}/documents/query`,
         {}
-      )) as { id: string; content: StoredSettings }[];
-      if (docs?.length > 0) {
-        const { id, content } = docs[0];
-        docIdRef.current = id;
-        const fid = content.functionId ?? DEFAULT_SINGLE_FID;
-        const rsf = content.rangeStartFunctionId ?? null;
-        const ref = content.rangeEndFunctionId ?? null;
-        const mode = content.mode ?? 'single';
+      )) as { id: string; content: CollectionDoc }[];
+
+      // Partition by type. Legacy docs without `type` are treated as config.
+      const configDoc = docs?.find(
+        (d) => d.content?.type === 'config' || d.content?.type === undefined
+      );
+      const stateDoc = docs?.find((d) => d.content?.type === 'state');
+
+      if (configDoc) {
+        const { id, content } = configDoc;
+        configDocIdRef.current = id;
+        const c = content as ConfigDoc;
+        const fid = c.functionId ?? DEFAULT_SINGLE_FID;
+        const rsf = c.rangeStartFunctionId ?? null;
+        const ref = c.rangeEndFunctionId ?? null;
+        const mode = c.mode ?? 'single';
         functionIdRef.current = fid;
         rangeStartFidRef.current = rsf;
         rangeEndFidRef.current = ref;
@@ -300,26 +319,60 @@ export default function App() {
         if (rsf) setInputRangeStartFid(String(rsf));
         if (ref) setInputRangeEndFid(String(ref));
       }
+
+      if (stateDoc) {
+        const { id, content } = stateDoc;
+        stateDocIdRef.current = id;
+        const s = content as StateDoc;
+        if (s.singleDate) setSingleSelected(isoToDate(s.singleDate));
+        if (s.rangeStart) {
+          setRangeSelected({
+            from: isoToDate(s.rangeStart),
+            to: s.rangeEnd ? isoToDate(s.rangeEnd) : undefined,
+          });
+        }
+        // Re-fire variables so cards restore filter without user re-clicking.
+        rehydrateVariables(s);
+      }
     } catch (e) {
       console.warn('[loadSettings]', e);
     }
   }
 
-  async function persistSettings(patch: Partial<StoredSettings>, silent = false) {
+  function rehydrateVariables(s: StateDoc) {
+    const updates: { functionId: number; value: string }[] = [];
+    if (selectionModeRef.current === 'single' && s.singleDate) {
+      const fid = functionIdRef.current;
+      if (fid !== null) updates.push({ functionId: fid, value: s.singleDate });
+    }
+    if (selectionModeRef.current === 'between' && s.rangeStart) {
+      const startFid = rangeStartFidRef.current;
+      const endFid = rangeEndFidRef.current ?? functionIdRef.current;
+      const to = s.rangeEnd ?? s.rangeStart;
+      if (startFid) updates.push({ functionId: startFid, value: s.rangeStart });
+      if (endFid && endFid !== startFid)
+        updates.push({ functionId: endFid, value: to });
+    }
+    if (updates.length === 0) return;
+    domo.requestVariablesUpdate(updates, () => {}, () => {});
+  }
+
+  async function persistSettings(patch: Partial<ConfigDoc>, silent = false) {
     if (IS_LOCAL) return;
     try {
-      const current: StoredSettings = {
+      const current: ConfigDoc = {
         functionId: functionIdRef.current ?? undefined,
         mode: selectionModeRef.current,
         rangeStartFunctionId: rangeStartFidRef.current ?? undefined,
         rangeEndFunctionId: rangeEndFidRef.current ?? undefined,
         ...patch,
+        type: 'config',
       };
       const payload = { content: current };
-      if (docIdRef.current) {
+      if (configDocIdRef.current) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await (domo as any).put(
-          `/domo/datastores/v1/collections/${COLLECTION}/documents/${docIdRef.current}`,
+          `/domo/datastores/v1/collections/${COLLECTION}/documents/${configDocIdRef.current}`,
           payload
         );
       } else {
@@ -328,11 +381,49 @@ export default function App() {
           `/domo/datastores/v1/collections/${COLLECTION}/documents/`,
           payload
         )) as { id: string };
-        docIdRef.current = res.id;
+        configDocIdRef.current = res.id;
       }
       if (!silent) setShowSettings(false);
     } catch (e) {
       console.error('[persistSettings]', e);
+    }
+  }
+
+  async function persistState(patch: Partial<Omit<StateDoc, 'type'>>) {
+    if (IS_LOCAL) return;
+    try {
+      // Read-modify-write: preserve unrelated fields (singleDate stays when
+      // only the range changes, and vice versa).
+      const existing: Partial<StateDoc> = {};
+      if (stateDocIdRef.current) {
+        try {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const doc = (await (domo as any).get(
+            `/domo/datastores/v1/collections/${COLLECTION}/documents/${stateDocIdRef.current}`
+          )) as { content: StateDoc };
+          Object.assign(existing, doc?.content ?? {});
+        } catch {
+          /* ignore — fall through to create */
+        }
+      }
+      const next: StateDoc = { ...existing, ...patch, type: 'state' };
+      const payload = { content: next };
+      if (stateDocIdRef.current) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (domo as any).put(
+          `/domo/datastores/v1/collections/${COLLECTION}/documents/${stateDocIdRef.current}`,
+          payload
+        );
+      } else {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const res = (await (domo as any).post(
+          `/domo/datastores/v1/collections/${COLLECTION}/documents/`,
+          payload
+        )) as { id: string };
+        stateDocIdRef.current = res.id;
+      }
+    } catch (e) {
+      console.error('[persistState]', e);
     }
   }
 
@@ -362,13 +453,22 @@ export default function App() {
 
   async function resetSettings() {
     try {
-      if (docIdRef.current && !IS_LOCAL) {
+      if (!IS_LOCAL) {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (domo as any).delete(
-          `/domo/datastores/v1/collections/${COLLECTION}/documents/${docIdRef.current}`
-        );
+        const d = (domo as any).delete;
+        if (configDocIdRef.current) {
+          await d(
+            `/domo/datastores/v1/collections/${COLLECTION}/documents/${configDocIdRef.current}`
+          );
+        }
+        if (stateDocIdRef.current) {
+          await d(
+            `/domo/datastores/v1/collections/${COLLECTION}/documents/${stateDocIdRef.current}`
+          );
+        }
       }
-      docIdRef.current = null;
+      configDocIdRef.current = null;
+      stateDocIdRef.current = null;
       functionIdRef.current = null;
       rangeStartFidRef.current = null;
       rangeEndFidRef.current = null;
@@ -378,6 +478,8 @@ export default function App() {
       setInputFid('');
       setInputRangeStartFid('');
       setInputRangeEndFid('');
+      setSingleSelected(undefined);
+      setRangeSelected(undefined);
       setAutoDetected(false);
       detectedVars.clear();
       notifyDetected();
@@ -512,10 +614,15 @@ export default function App() {
       const iso = toISO(date);
       if (!availableDates.has(iso)) return;
       setSingleSelected(date);
-      if (IS_LOCAL) return;
+      if (IS_LOCAL) {
+        console.log('[DEV] single pick:', iso);
+        return;
+      }
       const fid = functionIdRef.current;
-      if (fid === null) return;
-      domo.requestVariablesUpdate([{ functionId: fid, value: iso }], () => {}, () => {});
+      if (fid !== null) {
+        domo.requestVariablesUpdate([{ functionId: fid, value: iso }], () => {}, () => {});
+      }
+      persistState({ singleDate: iso });
     },
     [availableDates]
   );
@@ -532,6 +639,10 @@ export default function App() {
       console.log('[DEV] range apply:', from, '→', to);
       return;
     }
+    // Persist picked range to collection (brick state — survives reload).
+    persistState({ rangeStart: from, rangeEnd: to });
+    // Fire App Studio variables so cards re-filter. Collection is brick memory,
+    // variables are filter transport — cards never touch the collection.
     const startFid = rangeStartFidRef.current;
     const endFid = rangeEndFidRef.current ?? functionIdRef.current;
     const updates: { functionId: number; value: string }[] = [];
