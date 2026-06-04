@@ -10,6 +10,10 @@ const DATASET_ALIAS = 'sampleData';
 const DATE_COLUMN = 'Date';
 const EN_DASH = '–';
 const DEFAULT_SINGLE_FID = 131272;
+// NAB stakeholders haven't justified Between mode yet (call 2026-06-04).
+// Hide the toggle UI but keep the code paths so we can re-enable without a
+// rebuild once they come back with a use case.
+const HIDE_BETWEEN = true;
 const IS_LOCAL =
   window.location.hostname === 'localhost' ||
   window.location.hostname === '127.0.0.1';
@@ -391,7 +395,9 @@ export default function App() {
         const fid = c.functionId ?? DEFAULT_SINGLE_FID;
         const rsf = c.rangeStartFunctionId ?? null;
         const ref = c.rangeEndFunctionId ?? null;
-        const mode = c.mode ?? 'single';
+        // Force single while Between is masked — stored 'between' from prior
+        // run shouldn't surface a UI we've removed.
+        const mode = HIDE_BETWEEN ? 'single' : (c.mode ?? 'single');
         const ep = c.endpointMode ?? 'inclusive';
         functionIdRef.current = fid;
         rangeStartFidRef.current = rsf;
@@ -869,6 +875,7 @@ export default function App() {
             />
           </div>
 
+          {!HIDE_BETWEEN && (
           <div className="settings-group">
             <label className="settings-sublabel">Range start variable ID</label>
             <input
@@ -879,7 +886,9 @@ export default function App() {
               onChange={(e) => setInputRangeStartFid(e.target.value)}
             />
           </div>
+          )}
 
+          {!HIDE_BETWEEN && (
           <div className="settings-group">
             <label className="settings-sublabel">Range end variable ID</label>
             <input
@@ -890,6 +899,7 @@ export default function App() {
               onChange={(e) => setInputRangeEndFid(e.target.value)}
             />
           </div>
+          )}
 
           <div className="settings-group">
             <label className="settings-sublabel">Endpoint mode</label>
@@ -934,21 +944,23 @@ export default function App() {
       {/* ── Main calendar area ── */}
       {!showSettings && (
         <>
-          {/* Selection mode toggle */}
-          <div className="mode-toggle">
-            <button
-              className={`mode-btn ${selectionMode === 'single' ? 'active' : ''}`}
-              onClick={() => switchSelectionMode('single')}
-            >
-              Single date
-            </button>
-            <button
-              className={`mode-btn ${selectionMode === 'between' ? 'active' : ''}`}
-              onClick={() => switchSelectionMode('between')}
-            >
-              Between
-            </button>
-          </div>
+          {/* Selection mode toggle — hidden while Between is masked. */}
+          {!HIDE_BETWEEN && (
+            <div className="mode-toggle">
+              <button
+                className={`mode-btn ${selectionMode === 'single' ? 'active' : ''}`}
+                onClick={() => switchSelectionMode('single')}
+              >
+                Single date
+              </button>
+              <button
+                className={`mode-btn ${selectionMode === 'between' ? 'active' : ''}`}
+                onClick={() => switchSelectionMode('between')}
+              >
+                Between
+              </button>
+            </div>
+          )}
 
           {/* List / dropdown — single mode only */}
           {selectionMode === 'single' && viewMode === 'list' && (
@@ -961,9 +973,9 @@ export default function App() {
                 }}
               >
                 <option value="">— select a date —</option>
-                {sortedDates.map((d) => (
+                {[...sortedDates].reverse().map((d) => (
                   <option key={d} value={d}>
-                    {d}
+                    {formatDateLabel(isoToDate(d))}
                   </option>
                 ))}
               </select>
