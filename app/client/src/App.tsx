@@ -8,7 +8,6 @@ import './App.css';
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DATASET_ALIAS = 'sampleData';
 const DATE_COLUMN = 'Date';
-const COLLECTION = 'nab-date-selector-settings';
 const EN_DASH = '–';
 const DEFAULT_SINGLE_FID = 131272;
 const IS_LOCAL =
@@ -59,6 +58,85 @@ function formatMonthLabel(d: Date): string {
 function formatDateLabel(d: Date): string {
   return `${d.getFullYear()} ${EN_DASH} ${format(d, 'MMM')} ${EN_DASH} ${String(d.getDate()).padStart(2, '0')}`;
 }
+
+// ── Collection backend ──────────────────────────────────────────────────────
+// Real Domo in production; localStorage shim when IS_LOCAL so persistence flows
+// (persistState, persistSettings, loadSettings, reset) can be exercised in dev.
+const LOCAL_COLL_KEY = `domo-appdb-mock:nab-date-selector-settings`;
+
+function readLocalDocs(): { id: string; content: CollectionDoc }[] {
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_COLL_KEY) ?? '[]');
+  } catch {
+    return [];
+  }
+}
+function writeLocalDocs(docs: { id: string; content: CollectionDoc }[]) {
+  localStorage.setItem(LOCAL_COLL_KEY, JSON.stringify(docs));
+}
+function mkLocalId() {
+  return `local-${Math.random().toString(36).slice(2, 10)}-${Date.now()}`;
+}
+
+const collBackend = {
+  async queryAll(): Promise<{ id: string; content: CollectionDoc }[]> {
+    if (IS_LOCAL) return readLocalDocs();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (domo as any).post(
+      `/domo/datastores/v1/collections/nab-date-selector-settings/documents/query`,
+      {}
+    );
+  },
+  async getOne(id: string): Promise<{ content: CollectionDoc } | null> {
+    if (IS_LOCAL) {
+      const found = readLocalDocs().find((d) => d.id === id);
+      return found ? { content: found.content } : null;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (domo as any).get(
+      `/domo/datastores/v1/collections/nab-date-selector-settings/documents/${id}`
+    );
+  },
+  async create(content: CollectionDoc): Promise<{ id: string }> {
+    if (IS_LOCAL) {
+      const docs = readLocalDocs();
+      const id = mkLocalId();
+      docs.push({ id, content });
+      writeLocalDocs(docs);
+      return { id };
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (domo as any).post(
+      `/domo/datastores/v1/collections/nab-date-selector-settings/documents/`,
+      { content }
+    );
+  },
+  async update(id: string, content: CollectionDoc): Promise<void> {
+    if (IS_LOCAL) {
+      const docs = readLocalDocs();
+      const idx = docs.findIndex((d) => d.id === id);
+      if (idx >= 0) docs[idx] = { id, content };
+      else docs.push({ id, content });
+      writeLocalDocs(docs);
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (domo as any).put(
+      `/domo/datastores/v1/collections/nab-date-selector-settings/documents/${id}`,
+      { content }
+    );
+  },
+  async delete(id: string): Promise<void> {
+    if (IS_LOCAL) {
+      writeLocalDocs(readLocalDocs().filter((d) => d.id !== id));
+      return;
+    }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (domo as any).delete(
+      `/domo/datastores/v1/collections/nab-date-selector-settings/documents/${id}`
+    );
+  },
+};
 
 async function fetchLocalDates(): Promise<string[]> {
   const res = await fetch('/sample-data.csv');
@@ -282,16 +360,8 @@ export default function App() {
   }
 
   async function loadSettings() {
-    if (IS_LOCAL) {
-      functionIdRef.current = DEFAULT_SINGLE_FID;
-      return;
-    }
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const docs = (await (domo as any).post(
-        `/domo/datastores/v1/collections/${COLLECTION}/documents/query`,
-        {}
-      )) as { id: string; content: CollectionDoc }[];
+      const docs = await collBackend.queryAll();
 
       // Partition by type. Legacy docs without `type` are treated as config.
       const configDoc = docs?.find(
@@ -354,11 +424,14 @@ export default function App() {
         updates.push({ functionId: endFid, value: to });
     }
     if (updates.length === 0) return;
+    if (IS_LOCAL) {
+      console.log('[DEV] rehydrate variables:', updates);
+      return;
+    }
     domo.requestVariablesUpdate(updates, () => {}, () => {});
   }
 
   async function persistSettings(patch: Partial<ConfigDoc>, silent = false) {
-    if (IS_LOCAL) return;
     try {
       const current: ConfigDoc = {
         functionId: functionIdRef.current ?? undefined,
@@ -368,19 +441,10 @@ export default function App() {
         ...patch,
         type: 'config',
       };
-      const payload = { content: current };
       if (configDocIdRef.current) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (domo as any).put(
-          `/domo/datastores/v1/collections/${COLLECTION}/documents/${configDocIdRef.current}`,
-          payload
-        );
+        await collBackend.update(configDocIdRef.current, current);
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const res = (await (domo as any).post(
-          `/domo/datastores/v1/collections/${COLLECTION}/documents/`,
-          payload
-        )) as { id: string };
+        const res = await collBackend.create(current);
         configDocIdRef.current = res.id;
       }
       if (!silent) setShowSettings(false);
@@ -390,36 +454,23 @@ export default function App() {
   }
 
   async function persistState(patch: Partial<Omit<StateDoc, 'type'>>) {
-    if (IS_LOCAL) return;
     try {
       // Read-modify-write: preserve unrelated fields (singleDate stays when
       // only the range changes, and vice versa).
       const existing: Partial<StateDoc> = {};
       if (stateDocIdRef.current) {
         try {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const doc = (await (domo as any).get(
-            `/domo/datastores/v1/collections/${COLLECTION}/documents/${stateDocIdRef.current}`
-          )) as { content: StateDoc };
-          Object.assign(existing, doc?.content ?? {});
+          const doc = await collBackend.getOne(stateDocIdRef.current);
+          if (doc?.content) Object.assign(existing, doc.content);
         } catch {
-          /* ignore — fall through to create */
+          /* fall through to create */
         }
       }
       const next: StateDoc = { ...existing, ...patch, type: 'state' };
-      const payload = { content: next };
       if (stateDocIdRef.current) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (domo as any).put(
-          `/domo/datastores/v1/collections/${COLLECTION}/documents/${stateDocIdRef.current}`,
-          payload
-        );
+        await collBackend.update(stateDocIdRef.current, next);
       } else {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const res = (await (domo as any).post(
-          `/domo/datastores/v1/collections/${COLLECTION}/documents/`,
-          payload
-        )) as { id: string };
+        const res = await collBackend.create(next);
         stateDocIdRef.current = res.id;
       }
     } catch (e) {
@@ -453,20 +504,8 @@ export default function App() {
 
   async function resetSettings() {
     try {
-      if (!IS_LOCAL) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const d = (domo as any).delete;
-        if (configDocIdRef.current) {
-          await d(
-            `/domo/datastores/v1/collections/${COLLECTION}/documents/${configDocIdRef.current}`
-          );
-        }
-        if (stateDocIdRef.current) {
-          await d(
-            `/domo/datastores/v1/collections/${COLLECTION}/documents/${stateDocIdRef.current}`
-          );
-        }
-      }
+      if (configDocIdRef.current) await collBackend.delete(configDocIdRef.current);
+      if (stateDocIdRef.current) await collBackend.delete(stateDocIdRef.current);
       configDocIdRef.current = null;
       stateDocIdRef.current = null;
       functionIdRef.current = null;
@@ -614,6 +653,7 @@ export default function App() {
       const iso = toISO(date);
       if (!availableDates.has(iso)) return;
       setSingleSelected(date);
+      persistState({ singleDate: iso });
       if (IS_LOCAL) {
         console.log('[DEV] single pick:', iso);
         return;
@@ -622,7 +662,6 @@ export default function App() {
       if (fid !== null) {
         domo.requestVariablesUpdate([{ functionId: fid, value: iso }], () => {}, () => {});
       }
-      persistState({ singleDate: iso });
     },
     [availableDates]
   );
@@ -635,12 +674,12 @@ export default function App() {
     if (!rangeSelected?.from) return;
     const from = toISO(rangeSelected.from);
     const to = rangeSelected.to ? toISO(rangeSelected.to) : from;
+    // Persist picked range to collection (brick state — survives reload).
+    persistState({ rangeStart: from, rangeEnd: to });
     if (IS_LOCAL) {
       console.log('[DEV] range apply:', from, '→', to);
       return;
     }
-    // Persist picked range to collection (brick state — survives reload).
-    persistState({ rangeStart: from, rangeEnd: to });
     // Fire App Studio variables so cards re-filter. Collection is brick memory,
     // variables are filter transport — cards never touch the collection.
     const startFid = rangeStartFidRef.current;
