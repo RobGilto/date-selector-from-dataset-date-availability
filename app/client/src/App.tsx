@@ -18,12 +18,19 @@ const IS_LOCAL =
 type SelectionMode = 'single' | 'between';
 type ViewMode = 'calendar' | 'list';
 
+// 'inclusive' (default) shifts pushed values by ±1 day so downstream filters
+// using exclusive bounds (Date < vEnd / Date > vStart) include the picked date.
+// 'raw' pushes the picked ISO date verbatim — for downstream filters that
+// already use BETWEEN / <= / >=.
+type EndpointMode = 'inclusive' | 'raw';
+
 interface ConfigDoc {
   type?: 'config';
   functionId?: number;
   mode?: SelectionMode;
   rangeStartFunctionId?: number;
   rangeEndFunctionId?: number;
+  endpointMode?: EndpointMode;
 }
 
 interface StateDoc {
@@ -49,6 +56,12 @@ function toISO(d: Date): string {
 function isoToDate(iso: string): Date {
   const [y, m, d] = iso.split('-').map(Number);
   return new Date(y, m - 1, d);
+}
+
+function addDays(iso: string, n: number): string {
+  const d = isoToDate(iso);
+  d.setDate(d.getDate() + n);
+  return toISO(d);
 }
 
 function formatMonthLabel(d: Date): string {
@@ -269,11 +282,13 @@ export default function App() {
   const rangeStartFidRef = useRef<number | null>(null);
   const rangeEndFidRef = useRef<number | null>(null);
   const selectionModeRef = useRef<SelectionMode>('single');
+  const endpointModeRef = useRef<EndpointMode>('inclusive');
 
   // Settings (state for display)
   const [functionId, setFunctionId] = useState<number | null>(DEFAULT_SINGLE_FID);
   const [rangeStartFid, setRangeStartFid] = useState<number | null>(null);
   const [rangeEndFid, setRangeEndFid] = useState<number | null>(null);
+  const [endpointMode, setEndpointMode] = useState<EndpointMode>('inclusive');
 
   // Settings inputs
   const [inputFid, setInputFid] = useState(String(DEFAULT_SINGLE_FID));
@@ -377,14 +392,17 @@ export default function App() {
         const rsf = c.rangeStartFunctionId ?? null;
         const ref = c.rangeEndFunctionId ?? null;
         const mode = c.mode ?? 'single';
+        const ep = c.endpointMode ?? 'inclusive';
         functionIdRef.current = fid;
         rangeStartFidRef.current = rsf;
         rangeEndFidRef.current = ref;
         selectionModeRef.current = mode;
+        endpointModeRef.current = ep;
         setFunctionId(fid);
         setRangeStartFid(rsf);
         setRangeEndFid(ref);
         setSelectionMode(mode);
+        setEndpointMode(ep);
         setInputFid(String(fid));
         if (rsf) setInputRangeStartFid(String(rsf));
         if (ref) setInputRangeEndFid(String(ref));
@@ -410,18 +428,24 @@ export default function App() {
   }
 
   function rehydrateVariables(s: StateDoc) {
+    const inc = endpointModeRef.current === 'inclusive';
     const updates: { functionId: number; value: string }[] = [];
     if (selectionModeRef.current === 'single' && s.singleDate) {
       const fid = functionIdRef.current;
-      if (fid !== null) updates.push({ functionId: fid, value: s.singleDate });
+      // Single-date variable is treated as upper bound (vTillSelectedMonth).
+      // Shift +1 so downstream `Date < v` keeps the picked date in scope.
+      const v = inc ? addDays(s.singleDate, 1) : s.singleDate;
+      if (fid !== null) updates.push({ functionId: fid, value: v });
     }
     if (selectionModeRef.current === 'between' && s.rangeStart) {
       const startFid = rangeStartFidRef.current;
       const endFid = rangeEndFidRef.current ?? functionIdRef.current;
       const to = s.rangeEnd ?? s.rangeStart;
-      if (startFid) updates.push({ functionId: startFid, value: s.rangeStart });
+      const startVal = inc ? addDays(s.rangeStart, -1) : s.rangeStart;
+      const endVal = inc ? addDays(to, 1) : to;
+      if (startFid) updates.push({ functionId: startFid, value: startVal });
       if (endFid && endFid !== startFid)
-        updates.push({ functionId: endFid, value: to });
+        updates.push({ functionId: endFid, value: endVal });
     }
     if (updates.length === 0) return;
     if (IS_LOCAL) {
@@ -438,6 +462,7 @@ export default function App() {
         mode: selectionModeRef.current,
         rangeStartFunctionId: rangeStartFidRef.current ?? undefined,
         rangeEndFunctionId: rangeEndFidRef.current ?? undefined,
+        endpointMode: endpointModeRef.current,
         ...patch,
         type: 'config',
       };
@@ -511,9 +536,11 @@ export default function App() {
       functionIdRef.current = null;
       rangeStartFidRef.current = null;
       rangeEndFidRef.current = null;
+      endpointModeRef.current = 'inclusive';
       setFunctionId(null);
       setRangeStartFid(null);
       setRangeEndFid(null);
+      setEndpointMode('inclusive');
       setInputFid('');
       setInputRangeStartFid('');
       setInputRangeEndFid('');
@@ -654,13 +681,19 @@ export default function App() {
       if (!availableDates.has(iso)) return;
       setSingleSelected(date);
       persistState({ singleDate: iso });
+      const inc = endpointModeRef.current === 'inclusive';
+      const sendValue = inc ? addDays(iso, 1) : iso;
       if (IS_LOCAL) {
-        console.log('[DEV] single pick:', iso);
+        console.log('[DEV] single pick:', iso, '→ var=', sendValue);
         return;
       }
       const fid = functionIdRef.current;
       if (fid !== null) {
-        domo.requestVariablesUpdate([{ functionId: fid, value: iso }], () => {}, () => {});
+        domo.requestVariablesUpdate(
+          [{ functionId: fid, value: sendValue }],
+          () => {},
+          () => {}
+        );
       }
     },
     [availableDates]
@@ -676,8 +709,22 @@ export default function App() {
     const to = rangeSelected.to ? toISO(rangeSelected.to) : from;
     // Persist picked range to collection (brick state — survives reload).
     persistState({ rangeStart: from, rangeEnd: to });
+    // Shift endpoints to make downstream exclusive filters (Date > start,
+    // Date < end) include the picked dates. Toggle via endpointMode = 'raw'.
+    const inc = endpointModeRef.current === 'inclusive';
+    const startVal = inc ? addDays(from, -1) : from;
+    const endVal = inc ? addDays(to, 1) : to;
     if (IS_LOCAL) {
-      console.log('[DEV] range apply:', from, '→', to);
+      console.log(
+        '[DEV] range apply:',
+        from,
+        '→',
+        to,
+        '| vars:',
+        startVal,
+        '→',
+        endVal
+      );
       return;
     }
     // Fire App Studio variables so cards re-filter. Collection is brick memory,
@@ -685,9 +732,9 @@ export default function App() {
     const startFid = rangeStartFidRef.current;
     const endFid = rangeEndFidRef.current ?? functionIdRef.current;
     const updates: { functionId: number; value: string }[] = [];
-    if (startFid) updates.push({ functionId: startFid, value: from });
+    if (startFid) updates.push({ functionId: startFid, value: startVal });
     if (endFid && endFid !== startFid)
-      updates.push({ functionId: endFid, value: to });
+      updates.push({ functionId: endFid, value: endVal });
     if (updates.length === 0) {
       console.warn(
         '[applyRange] no variable bound to brick — App Studio designer must map at least one Date variable'
@@ -842,6 +889,27 @@ export default function App() {
               value={inputRangeEndFid}
               onChange={(e) => setInputRangeEndFid(e.target.value)}
             />
+          </div>
+
+          <div className="settings-group">
+            <label className="settings-sublabel">Endpoint mode</label>
+            <select
+              className="settings-input"
+              value={endpointMode}
+              onChange={(e) => {
+                const v = e.target.value as EndpointMode;
+                endpointModeRef.current = v;
+                setEndpointMode(v);
+                persistSettings({ endpointMode: v }, true);
+              }}
+            >
+              <option value="inclusive">
+                Inclusive (shift ±1 day — downstream uses &lt; / &gt;)
+              </option>
+              <option value="raw">
+                Raw (push picked dates verbatim — downstream uses BETWEEN / ≤ / ≥)
+              </option>
+            </select>
           </div>
 
           <div className="settings-actions">
