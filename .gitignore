@@ -1,0 +1,52 @@
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# ADW layer — out of git, focus repo on the app
+adws/
+agents/
+
+# Cache from prior sessions
+.memsearch/
+.firecrawl/
+.claude/cache/
+
+# Sibling repo (own git)
+domo-ai-vibe-rules/
+
+# Archived empty scaffold (keep on disk but out of git)
+_archive_initial_scaffold/
+
+# Large customer HAR captures — keep on disk, out of git
+app_docs/*.har
+
+# Playwright artifacts
+.playwright-mcp/
+playwright-reports/

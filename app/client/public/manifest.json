@@ -22,10 +22,10 @@
       "name": "nab-date-selector-settings",
       "schema": {
         "columns": [
-          {
-            "name": "functionId",
-            "type": "LONG"
-          }
+          { "name": "functionId", "type": "LONG" },
+          { "name": "mode", "type": "STRING" },
+          { "name": "rangeStartFunctionId", "type": "LONG" },
+          { "name": "rangeEndFunctionId", "type": "LONG" }
         ]
       },
       "permissions": [
