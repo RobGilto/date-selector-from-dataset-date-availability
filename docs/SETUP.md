@@ -14,6 +14,8 @@ Domo's native date filter and drives any App Studio variable on the page.
 - Configuration is **per-card** and **persists** in an AppDB collection.
   Admin sets it once; end users see only the calendar.
 
+![Calendar view — only dates with data are clickable](img/01-calendar-default.png)
+
 ---
 
 ## 0. Prereqs
@@ -48,6 +50,9 @@ Domo's native date filter and drives any App Studio variable on the page.
 
 1. Click the brick's **gear ⚙** (top-right of the card).
 2. Settings panel opens. The first section is **Variable Configuration**.
+
+![Settings panel — gear opens this view](img/02-settings-panel.png)
+
 3. The dropdown labelled "Detected on this page" lists every App Studio
    variable that's pushed a value to this brick on load. Two groups:
    - **Date-typed** — variables whose live value looks like an ISO date
@@ -72,9 +77,16 @@ Domo's native date filter and drives any App Studio variable on the page.
 ## 3. End-user behaviour
 
 - **Calendar view (default)** — months side-by-side; only in-dataset days
-  are clickable. Headers render as `2026 – Sep` (YYYY – MMM).
+  are clickable. Headers render as `2026 – Sep` (YYYY – MMM). Picked
+  date highlighted; selected label shown in the toolbar.
+
+  ![Calendar with a date selected](img/03-calendar-selected.png)
+
 - **List view (≡ icon)** — dropdown listing every available date,
   descending (latest first), formatted `YYYY – MMM – DD`.
+
+  ![List view — descending dropdown](img/04-list-view.png)
+
 - Picking a date pushes the raw ISO date to the configured variable.
   Filtered cards re-render.
 
