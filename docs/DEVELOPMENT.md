@@ -1,7 +1,7 @@
-# Developer Documentation — NAB Date Selector
+# Developer Documentation — Date Selector
 
 For engineers who will extend, debug, or hand off this Domo custom app
-(case `05930295`).
+
 
 ---
 
@@ -123,7 +123,7 @@ understand the brick. Key sections (search for the `// ──` dividers):
 | `resolveVarIds()` | Registry lookup; routes between localStorage and `domo.get` |
 | `fetchLocalDates()` | Parse `sample-data.csv` for local mode date set |
 | `registerVariablesListener()` | Subscribe to `domo.onVariablesUpdated`; ingest live variable name/fid/value tuples |
-| `discoverViaPageControls()` | Fallback discovery via REST endpoint (currently 404s on NAB pages — kept for other tenants) |
+| `discoverViaPageControls()` | Fallback discovery via REST endpoint (may 404 on some pages) |
 | `App` | React component — orchestrates everything |
 
 #### Key handlers inside `App`
@@ -172,7 +172,7 @@ The single most important config file. Declares:
   - `variablesDataSet` — optional 2-column registry (`Variable`,
     `VariableID`). Empty `dataSetId` means customer can leave unbound;
     `resolveVarIds()` handles the 404 gracefully.
-- `collectionsMapping` — `nab-date-selector-settings` AppDB collection
+- `collectionsMapping` — `date-selector-settings` AppDB collection
   with schema covering both `ConfigDoc` and `StateDoc` shapes. ADMIN
   read/write/delete, USER read.
 
@@ -262,7 +262,7 @@ When CLI auth is painful or you only have UI access:
 ```bash
 npm run build
 cd dist
-zip -r ../nab-calendar-X.X.X.zip .
+zip -r ../date-selector-X.X.X.zip .
 ```
 
 Then in Domo: Asset Library → Apps → find design → **⋮** → **Upload
@@ -283,7 +283,7 @@ New Version** → drop zip.
 
 ## 7. AppDB collection schema (per-card persistence)
 
-Collection name: `nab-date-selector-settings` (declared in manifest).
+Collection name: `date-selector-settings` (declared in manifest).
 
 Two document types, discriminated by `type` field:
 
@@ -341,8 +341,8 @@ implementation.
 
 `HIDE_BETWEEN = true` (top of `App.tsx`) masks the Single/Between mode
 toggle UI. Code paths still work — flip to `false` and rebuild to
-re-expose it. NAB stakeholders haven't justified the use case yet
-(call 2026-06-04).
+re-expose it. Product team has not justified the use case yet
+.
 
 ---
 
@@ -353,7 +353,7 @@ re-expose it. NAB stakeholders haven't justified the use case yet
 - Commit prefix style: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`
 - Manifest `version` increments on each publishable change (e.g.
   `1.0.3 → 1.0.4`)
-- Zip filename: `nab-calendar-<version>.zip`
+- Zip filename: `date-selector-<version>.zip`
 
 ---
 
@@ -381,7 +381,7 @@ Quick map from "the thing I'm trying to change" → the file to edit.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | `Failed to load resource: 404 /domo/environment/v1` | running locally — Domo iframe API absent | Expected. Only fires when `IS_LOCAL` is true. |
-| `404 /api/content/v1/pages/{id}/variable/controls/list` in real Domo | page-level discovery endpoint missing for this page type | Expected on NAB pages. Auto-detect via `onVariablesUpdated` still works. |
+| `404 /api/content/v1/pages/{id}/variable/controls/list` in real Domo | page-level discovery endpoint missing for this page type | Expected on some App Studio page types. Auto-detect via `onVariablesUpdated` still works. |
 | Detected dropdown empty in real Domo | no Date variables on page, or variables haven't fired their `onVariablesUpdated` event yet | Add a Date variable to the page; refresh card. |
 | `requestVariablesUpdate` accepted but cards don't filter | downstream beast mode uses `<` not `<=` | Either fix the beast mode (preferred) or temporarily re-add the ±1 day shift in `handleSingleSelect`. |
 | Picks don't persist across reload | AppDB collection schema mismatch | Bump manifest collection schema columns, republish; first new pick re-creates docs. |
@@ -392,4 +392,4 @@ Quick map from "the thing I'm trying to change" → the file to edit.
 
 ## 13. Support
 
-Robert Gilto · `robert.gilto@domo.com` · SF Case **05930295**
+Maintained in this repository — open an issue for support.

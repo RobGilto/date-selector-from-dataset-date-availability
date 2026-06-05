@@ -1,6 +1,6 @@
 # Date Selector — Setup Guide
 
-For NAB stakeholders (Case 05930295). Drop-in date control that replaces
+Drop-in date control that replaces
 Domo's native date filter and drives any App Studio variable on the page.
 
 ---
@@ -20,7 +20,7 @@ Domo's native date filter and drives any App Studio variable on the page.
 
 - App design **Date Selector** already exists in your tenant (id
   `4896fd53-0232-42d3-b31b-7be12b50e6ed`). If not, upload
-  `nab-calendar-1.0.4.zip` via Asset Library → Apps → ⋮ → Upload Design.
+  `date-selector-1.0.4.zip` via Asset Library → Apps → ⋮ → Upload Design.
 - Dataset with a `Date` column (literal name, case-sensitive).
 - At least one App Studio Date-typed variable on the page that some cards
   use as a filter (e.g. `vTillSelectedMonth`).
@@ -55,10 +55,10 @@ Domo's native date filter and drives any App Studio variable on the page.
      These are what this brick is designed to drive.
    - **Other detected** — non-date variables, surfaced for fallback in
      case the heuristic misses something.
-4. Pick the variable that drives your filtered cards. For NAB this is
+4. Pick the variable that drives your filtered cards. Commonly this is
    typically **`vTillSelectedMonth`** (functionId `131272`).
 5. Selection auto-saves to the brick's AppDB collection
-   (`nab-date-selector-settings`). Panel can be closed.
+   (`date-selector-settings`). Panel can be closed.
 6. Verify the green confirmation line at the bottom of the panel:
    `Active: single=131272, start=none, end=none`
 
@@ -129,4 +129,4 @@ Domo's native date filter and drives any App Studio variable on the page.
 
 ## Support
 
-Robert Gilto · `robert.gilto@domo.com` · SF Case **05930295**
+Open an issue in this repository for support.

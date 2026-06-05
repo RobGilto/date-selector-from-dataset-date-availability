@@ -52,5 +52,6 @@ app_docs/*.har
 playwright-reports/
 
 # Publish artifacts — built per-release, not source of truth
-app/client/nab-calendar-dist/
-app/client/nab-calendar-dist*.zip
+app/client/dist-publish/
+app/client/date-selector-*.zip
+app_docs/

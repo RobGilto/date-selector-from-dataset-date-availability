@@ -2,7 +2,7 @@
 description: Publish app/client/ to Domo via ryuu, sync design id
 ---
 
-Ship the current state of `app/client/` to NAB instance (`nab-au.domo.com`).
+Ship the current state of `app/client/` to the configured Domo instance.
 
 1. Confirm build passes: `cd app/client && npm run build`.
 2. Publish from the build output: `cd app/client/dist && npx ryuu publish`.

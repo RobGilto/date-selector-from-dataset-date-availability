@@ -1,30 +1,45 @@
-# NAB Calendar — Domo Custom App
+# Date Selector — Domo Custom App
 
-Custom App Studio card for NAB (Case 05930295). Date controller surfacing only dates with data, drives an App Studio variable.
+A Domo App Studio custom card that surfaces **only the dates present in
+the bound dataset** and drives an App Studio variable on selection. Cards
+filtered by that variable refresh whenever the user picks a date.
 
-## Quick start (client)
+- **Calendar view** — months side-by-side; non-data days greyed out
+- **List view** — descending dropdown of available dates
+- **Auto-detect** — the brick discovers page variables via
+  `domo.onVariablesUpdated`; admin picks one in the gear panel
+- **Persistence** — selected variable + last picked date stored in an
+  AppDB collection (`date-selector-settings`)
+
+## Quick start (local dev)
 
 ```bash
 cd app/client
 npm install
-npm run dev      # local dev — uses IS_LOCAL CSV mock if configured
+npm run dev      # http://localhost:5173 — uses IS_LOCAL CSV mocks
 ```
 
-Publish via ryuu:
+## Build & publish to Domo
 
 ```bash
 cd app/client
-npx ryuu login    # one-time
-npx ryuu publish
+npm run build
+cp public/manifest.json dist/
+cd dist
+npx ryuu publish    # first time: npx ryuu login -i <instance>.domo.com
 ```
 
-## ADW
+After the first publish, paste the returned design GUID into
+`app/client/public/manifest.json` under `id` so subsequent publishes
+update the same design instead of creating a new one.
 
-```bash
-cd adws
-uv sync
-cp .env.sample .env   # add ZAI_API_KEY
-uv run adw_sdlc_zte_iso.py <github_issue_no>
-```
+## Documentation
 
-See `CLAUDE.md` for full project context.
+- [`docs/SETUP.md`](docs/SETUP.md) — admin install + per-page configuration
+- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — engineer-facing deep-dive
+  (architecture, file index, dev workflow, troubleshooting)
+
+## Stack
+
+React 18 · TypeScript · Vite 5 · `ryuu.js` v6 · `react-day-picker` v9 ·
+`date-fns` v3 · Domo AppDB Datastore.

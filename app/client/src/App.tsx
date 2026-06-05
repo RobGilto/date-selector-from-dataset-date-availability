@@ -15,7 +15,7 @@ const DATE_COLUMN = 'Date';
 const VARIABLES_DATASET_ALIAS = 'variablesDataSet';
 const EN_DASH = '–';
 const DEFAULT_SINGLE_FID = 131272;
-// NAB stakeholders haven't justified Between mode yet (call 2026-06-04).
+// Between mode is not currently exposed pending product decision.
 // Hide the toggle UI but keep the code paths so we can re-enable without a
 // rebuild once they come back with a use case.
 const HIDE_BETWEEN = true;
@@ -75,7 +75,7 @@ function formatDateLabel(d: Date): string {
 // ── Collection backend ──────────────────────────────────────────────────────
 // Real Domo in production; localStorage shim when IS_LOCAL so persistence flows
 // (persistState, persistSettings, loadSettings, reset) can be exercised in dev.
-const LOCAL_COLL_KEY = `domo-appdb-mock:nab-date-selector-settings`;
+const LOCAL_COLL_KEY = `domo-appdb-mock:date-selector-settings`;
 
 function readLocalDocs(): { id: string; content: CollectionDoc }[] {
   try {
@@ -96,7 +96,7 @@ const collBackend = {
     if (IS_LOCAL) return readLocalDocs();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (domo as any).post(
-      `/domo/datastores/v1/collections/nab-date-selector-settings/documents/query`,
+      `/domo/datastores/v1/collections/date-selector-settings/documents/query`,
       {}
     );
   },
@@ -107,7 +107,7 @@ const collBackend = {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (domo as any).get(
-      `/domo/datastores/v1/collections/nab-date-selector-settings/documents/${id}`
+      `/domo/datastores/v1/collections/date-selector-settings/documents/${id}`
     );
   },
   async create(content: CollectionDoc): Promise<{ id: string }> {
@@ -120,7 +120,7 @@ const collBackend = {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (domo as any).post(
-      `/domo/datastores/v1/collections/nab-date-selector-settings/documents/`,
+      `/domo/datastores/v1/collections/date-selector-settings/documents/`,
       { content }
     );
   },
@@ -135,7 +135,7 @@ const collBackend = {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (domo as any).put(
-      `/domo/datastores/v1/collections/nab-date-selector-settings/documents/${id}`,
+      `/domo/datastores/v1/collections/date-selector-settings/documents/${id}`,
       { content }
     );
   },
@@ -146,7 +146,7 @@ const collBackend = {
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (domo as any).delete(
-      `/domo/datastores/v1/collections/nab-date-selector-settings/documents/${id}`
+      `/domo/datastores/v1/collections/date-selector-settings/documents/${id}`
     );
   },
 };
