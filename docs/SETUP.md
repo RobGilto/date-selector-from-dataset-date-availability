@@ -32,23 +32,19 @@ Domo's native date filter and drives any App Studio variable on the page.
 1. App Studio → open the page (Edit mode).
 2. **+ Card** → **Custom App** → search **Date Selector**.
 3. Place the card; minimum useful size 2×1.
+4. **Domo will prompt for the dataset** as part of adding the card —
+   the right-hand panel shows a dataset picker.
+   - Pick the dataset whose dates you want surfaced. Required column:
+     `Date` (literal name, case-sensitive).
+   - This wires up the brick's `sampleData` alias. You won't see the
+     word "bind" — it just looks like picking a data source. That's it.
+5. If a second alias `variablesDataSet` is shown, **skip it** (leave
+   unbound). Auto-detect handles single-variable cases without it. It's
+   only useful for advanced multi-app registries.
 
 ---
 
-## 2. Bind the dataset
-
-In the right-hand Properties panel for the brick:
-
-1. `sampleData` alias → pick the dataset whose dates you want surfaced.
-   Required column: `Date`.
-2. `variablesDataSet` alias → **leave unbound** unless you want the
-   advanced "variable registry by name" feature (rarely needed —
-   auto-detect handles single-variable cases). Domo will warn that an
-   alias is unbound; ignore.
-
----
-
-## 3. Configure which variable to drive (admin, one-time)
+## 2. Configure which variable to drive (admin, one-time)
 
 1. Click the brick's **gear ⚙** (top-right of the card).
 2. Settings panel opens. The first section is **Variable Configuration**.
@@ -73,7 +69,7 @@ In the right-hand Properties panel for the brick:
 
 ---
 
-## 4. End-user behaviour
+## 3. End-user behaviour
 
 - **Calendar view (default)** — months side-by-side; only in-dataset days
   are clickable. Headers render as `2026 – Sep` (YYYY – MMM).
@@ -84,7 +80,7 @@ In the right-hand Properties panel for the brick:
 
 ---
 
-## 5. Re-configure or clear
+## 4. Re-configure or clear
 
 - **Change the variable:** gear ⚙ → pick a different entry from the
   dropdown → auto-saves.
@@ -93,7 +89,7 @@ In the right-hand Properties panel for the brick:
 
 ---
 
-## 6. Sandbox / security notes
+## 5. Sandbox / security notes
 
 - The brick lives inside Domo's standard custom-app iframe sandbox.
 - Variable detection uses Domo's documented `domo.onVariablesUpdated`
