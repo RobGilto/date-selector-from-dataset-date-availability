@@ -6,10 +6,24 @@ filtered by that variable refresh whenever the user picks a date.
 
 - **Calendar view** — months side-by-side; non-data days greyed out
 - **List view** — descending dropdown of available dates
-- **Auto-detect** — the brick discovers page variables via
-  `domo.onVariablesUpdated`; admin picks one in the gear panel
 - **Persistence** — selected variable + last picked date stored in an
   AppDB collection (`date-selector-settings`)
+
+## How variable wiring works
+
+1. **Auto-detect (primary)** — the brick subscribes to
+   `domo.onVariablesUpdated` at mount and ingests every variable
+   (`functionId` + `name` + live value) that App Studio pushes to the
+   card. The gear panel renders these in a dropdown grouped by
+   "Date-typed" vs "Other detected". Admin clicks one row → saved.
+2. **Manual variable ID (fallback)** — if the variable doesn't appear in
+   auto-detect, paste its `functionId` into the "Single date variable ID"
+   field.
+3. **Dev-console snippet (last resort)** — when neither path works (rare,
+   usually on legacy pages where the variable hasn't fired), the gear
+   panel includes a one-liner you copy into the browser console on the
+   host App Studio page; it prints a table of every variable's name +
+   `functionId`. Paste the right ID into the fallback field above.
 
 ## Quick start (local dev)
 
