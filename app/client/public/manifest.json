@@ -11,6 +11,14 @@
       "alias": "sampleData",
       "dataSetId": "517ca1d7-3130-452b-926a-e4a6612212ee",
       "fields": []
+    },
+    {
+      "alias": "variablesDataSet",
+      "dataSetId": "",
+      "fields": [
+        { "alias": "Variable", "columnName": "Variable" },
+        { "alias": "VariableID", "columnName": "VariableID" }
+      ]
     }
   ],
   "workflowMapping": [],

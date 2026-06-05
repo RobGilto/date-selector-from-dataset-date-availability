@@ -8,6 +8,11 @@ import './App.css';
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DATASET_ALIAS = 'sampleData';
 const DATE_COLUMN = 'Date';
+// Optional second dataset alias: a customer-maintained "variables registry" —
+// two columns (Variable, VariableID) mapping human-readable variable names
+// to App Studio function IDs. Mirrors the Nine "Top Program" pattern. Lets
+// the brick drive variables by NAME instead of magic numeric IDs.
+const VARIABLES_DATASET_ALIAS = 'variablesDataSet';
 const EN_DASH = '–';
 const DEFAULT_SINGLE_FID = 131272;
 // NAB stakeholders haven't justified Between mode yet (call 2026-06-04).
@@ -30,6 +35,10 @@ type EndpointMode = 'inclusive' | 'raw';
 
 interface ConfigDoc {
   type?: 'config';
+  // Preferred (v1.2+): variable identified by NAME, resolved via registry dataset.
+  variableName?: string;
+  // Legacy: variable identified by raw functionId. Used as fallback when no
+  // variableName configured or registry lookup misses.
   functionId?: number;
   mode?: SelectionMode;
   rangeStartFunctionId?: number;
@@ -154,6 +163,71 @@ const collBackend = {
     );
   },
 };
+
+// ── Variable name → functionId registry ─────────────────────────────────────
+// Resolves a customer-friendly variable name (e.g. "vTillSelectedMonth") to
+// its App Studio function ID via the bound `variablesDataSet`. The customer
+// maintains the dataset (CSV upload or Magic ETL output) with two columns:
+// Variable, VariableID. Lookup is module-scoped + cached for the session.
+//
+// Mirrors the Nine "Top Program" pattern. Survives App Studio variable
+// rebuilds (function IDs churn; names stay stable) and removes the need for
+// the user to know magic numeric IDs.
+let varRegistryCache: Map<string, number> | null = null;
+let varRegistryPromise: Promise<Map<string, number>> | null = null;
+
+async function fetchLocalRegistry(): Promise<Map<string, number>> {
+  const map = new Map<string, number>();
+  try {
+    const res = await fetch('/sample-variables-registry.csv');
+    if (!res.ok) return map;
+    const text = await res.text();
+    const lines = text.trim().split('\n');
+    const header = lines[0].split(',').map((h) => h.trim());
+    const nameIdx = header.indexOf('Variable');
+    const idIdx = header.indexOf('VariableID');
+    if (nameIdx === -1 || idIdx === -1) return map;
+    lines.slice(1).forEach((line) => {
+      const cols = line.split(',').map((c) => c.trim());
+      const name = cols[nameIdx];
+      const id = Number(cols[idIdx]);
+      if (name && Number.isFinite(id)) map.set(name, id);
+    });
+  } catch {
+    /* ignore — empty registry is valid */
+  }
+  return map;
+}
+
+async function resolveVarIds(): Promise<Map<string, number>> {
+  if (varRegistryCache) return varRegistryCache;
+  if (varRegistryPromise) return varRegistryPromise;
+  varRegistryPromise = (async () => {
+    const map = new Map<string, number>();
+    if (IS_LOCAL) {
+      const local = await fetchLocalRegistry();
+      local.forEach((v, k) => map.set(k, v));
+      varRegistryCache = map;
+      return map;
+    }
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = (await (domo as any).get(
+        `/data/v1/${VARIABLES_DATASET_ALIAS}?fields=Variable,VariableID`
+      )) as { Variable?: string; VariableID?: string | number }[];
+      for (const r of rows ?? []) {
+        const name = r?.Variable ? String(r.Variable) : '';
+        const idNum = Number(r?.VariableID);
+        if (name && Number.isFinite(idNum)) map.set(name, idNum);
+      }
+    } catch (e) {
+      console.warn('[resolveVarIds] registry dataset unavailable', e);
+    }
+    varRegistryCache = map;
+    return map;
+  })();
+  return varRegistryPromise;
+}
 
 async function fetchLocalDates(): Promise<string[]> {
   const res = await fetch('/sample-data.csv');
@@ -287,12 +361,15 @@ export default function App() {
   const rangeEndFidRef = useRef<number | null>(null);
   const selectionModeRef = useRef<SelectionMode>('single');
   const endpointModeRef = useRef<EndpointMode>('inclusive');
+  const variableNameRef = useRef<string | null>(null);
 
   // Settings (state for display)
   const [functionId, setFunctionId] = useState<number | null>(DEFAULT_SINGLE_FID);
   const [rangeStartFid, setRangeStartFid] = useState<number | null>(null);
   const [rangeEndFid, setRangeEndFid] = useState<number | null>(null);
   const [endpointMode, setEndpointMode] = useState<EndpointMode>('inclusive');
+  const [variableName, setVariableName] = useState<string>('');
+  const [registry, setRegistry] = useState<Map<string, number>>(new Map());
 
   // Settings inputs
   const [inputFid, setInputFid] = useState(String(DEFAULT_SINGLE_FID));
@@ -334,6 +411,10 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
+      // Load registry first — loadSettings's rehydrateVariables path relies on
+      // effectiveFid() being able to resolve names that were persisted.
+      const reg = await resolveVarIds();
+      setRegistry(reg);
       await loadSettings();
       await fetchDates();
     })();
@@ -399,16 +480,19 @@ export default function App() {
         // run shouldn't surface a UI we've removed.
         const mode = HIDE_BETWEEN ? 'single' : (c.mode ?? 'single');
         const ep = c.endpointMode ?? 'inclusive';
+        const vname = c.variableName ?? '';
         functionIdRef.current = fid;
         rangeStartFidRef.current = rsf;
         rangeEndFidRef.current = ref;
         selectionModeRef.current = mode;
         endpointModeRef.current = ep;
+        variableNameRef.current = vname || null;
         setFunctionId(fid);
         setRangeStartFid(rsf);
         setRangeEndFid(ref);
         setSelectionMode(mode);
         setEndpointMode(ep);
+        setVariableName(vname);
         setInputFid(String(fid));
         if (rsf) setInputRangeStartFid(String(rsf));
         if (ref) setInputRangeEndFid(String(ref));
@@ -433,11 +517,24 @@ export default function App() {
     }
   }
 
+  // Resolve which functionId the brick should push. Registry-by-name takes
+  // priority; falls back to the legacy raw functionId stored in config.
+  // Returns null if neither is configured / resolvable.
+  function effectiveFid(): number | null {
+    const name = variableNameRef.current;
+    if (name) {
+      const fid = registry.get(name);
+      if (typeof fid === 'number') return fid;
+      console.warn(`[effectiveFid] '${name}' not in registry — falling back to functionId`);
+    }
+    return functionIdRef.current ?? null;
+  }
+
   function rehydrateVariables(s: StateDoc) {
     const inc = endpointModeRef.current === 'inclusive';
     const updates: { functionId: number; value: string }[] = [];
     if (selectionModeRef.current === 'single' && s.singleDate) {
-      const fid = functionIdRef.current;
+      const fid = effectiveFid();
       // Single-date variable is treated as upper bound (vTillSelectedMonth).
       // Shift +1 so downstream `Date < v` keeps the picked date in scope.
       const v = inc ? addDays(s.singleDate, 1) : s.singleDate;
@@ -445,7 +542,7 @@ export default function App() {
     }
     if (selectionModeRef.current === 'between' && s.rangeStart) {
       const startFid = rangeStartFidRef.current;
-      const endFid = rangeEndFidRef.current ?? functionIdRef.current;
+      const endFid = rangeEndFidRef.current ?? effectiveFid();
       const to = s.rangeEnd ?? s.rangeStart;
       const startVal = inc ? addDays(s.rangeStart, -1) : s.rangeStart;
       const endVal = inc ? addDays(to, 1) : to;
@@ -465,6 +562,7 @@ export default function App() {
     try {
       const current: ConfigDoc = {
         functionId: functionIdRef.current ?? undefined,
+        variableName: variableNameRef.current ?? undefined,
         mode: selectionModeRef.current,
         rangeStartFunctionId: rangeStartFidRef.current ?? undefined,
         rangeEndFunctionId: rangeEndFidRef.current ?? undefined,
@@ -543,10 +641,12 @@ export default function App() {
       rangeStartFidRef.current = null;
       rangeEndFidRef.current = null;
       endpointModeRef.current = 'inclusive';
+      variableNameRef.current = null;
       setFunctionId(null);
       setRangeStartFid(null);
       setRangeEndFid(null);
       setEndpointMode('inclusive');
+      setVariableName('');
       setInputFid('');
       setInputRangeStartFid('');
       setInputRangeEndFid('');
@@ -689,11 +789,11 @@ export default function App() {
       persistState({ singleDate: iso });
       const inc = endpointModeRef.current === 'inclusive';
       const sendValue = inc ? addDays(iso, 1) : iso;
+      const fid = effectiveFid();
       if (IS_LOCAL) {
-        console.log('[DEV] single pick:', iso, '→ var=', sendValue);
+        console.log('[DEV] single pick:', iso, '→ var=', sendValue, '(fid=', fid, ')');
         return;
       }
-      const fid = functionIdRef.current;
       if (fid !== null) {
         domo.requestVariablesUpdate(
           [{ functionId: fid, value: sendValue }],
@@ -736,7 +836,7 @@ export default function App() {
     // Fire App Studio variables so cards re-filter. Collection is brick memory,
     // variables are filter transport — cards never touch the collection.
     const startFid = rangeStartFidRef.current;
-    const endFid = rangeEndFidRef.current ?? functionIdRef.current;
+    const endFid = rangeEndFidRef.current ?? effectiveFid();
     const updates: { functionId: number; value: string }[] = [];
     if (startFid) updates.push({ functionId: startFid, value: startVal });
     if (endFid && endFid !== startFid)
@@ -865,7 +965,44 @@ export default function App() {
           </div>
 
           <div className="settings-group">
-            <label className="settings-sublabel">Single date variable ID</label>
+            <label className="settings-sublabel">
+              Variable name <span className="settings-fid">(preferred)</span>
+            </label>
+            <input
+              className="settings-input"
+              type="text"
+              placeholder="e.g. vTillSelectedMonth"
+              list="variable-name-options"
+              value={variableName}
+              onChange={(e) => {
+                const v = e.target.value;
+                setVariableName(v);
+                variableNameRef.current = v || null;
+                persistSettings({ variableName: v || undefined }, true);
+              }}
+            />
+            <datalist id="variable-name-options">
+              {Array.from(registry.keys()).map((n) => (
+                <option key={n} value={n}>{`${n} (${registry.get(n)})`}</option>
+              ))}
+            </datalist>
+            {registry.size === 0 && (
+              <p className="settings-hint">
+                No <code>variablesDataSet</code> bound — fill in the legacy ID
+                below, or bind a registry dataset (see SETUP.md).
+              </p>
+            )}
+            {variableName && registry.size > 0 && !registry.has(variableName) && (
+              <p className="settings-hint" style={{ color: '#c0392b' }}>
+                ⚠ '{variableName}' not in registry — will fall back to legacy ID
+              </p>
+            )}
+          </div>
+
+          <div className="settings-group">
+            <label className="settings-sublabel">
+              Single date variable ID <span className="settings-fid">(legacy fallback)</span>
+            </label>
             <input
               className="settings-input"
               type="number"
