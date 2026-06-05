@@ -3,12 +3,6 @@
 For engineers who will extend, debug, or hand off this Domo custom app
 (case `05930295`).
 
-Generated alongside an `understand-anything` knowledge graph at
-`app/client/.understand-anything/knowledge-graph.json`. Every code
-reference below ties back to a node in that graph; load the graph in the
-dashboard (`/understand-anything:understand-dashboard`) to navigate
-visually.
-
 ---
 
 ## 1. What this app does (10-second version)
@@ -64,7 +58,7 @@ app/client/
 └── docs/SETUP.md                      ← End-admin setup guide
 ```
 
-Knowledge graph buckets these into **4 layers**:
+Files group into **4 architecture layers**:
 
 1. **UI Layer** — `index.html`, `main.tsx`, `App.tsx`, `App.css`
 2. **Configuration** — `package.json`, `tsconfig*`, `vite.config.ts`,
@@ -119,7 +113,7 @@ understand the brick. Key sections (search for the `// ──` dividers):
 | Module-level detection | top | `registerVariablesListener` subscribes to `domo.onVariablesUpdated`; `discoverViaPageControls` hits page-controls REST API |
 | Component | bottom | `App` — state, effects, handlers, render |
 
-#### Function inventory (from the knowledge graph)
+#### Function inventory
 
 | Function | Purpose |
 |---|---|
@@ -363,22 +357,22 @@ re-expose it. NAB stakeholders haven't justified the use case yet
 
 ---
 
-## 11. Knowledge graph cross-reference
+## 11. File reference index
 
-| Concern | Files | Knowledge-graph node IDs |
-|---|---|---|
-| App boot | `index.html`, `main.tsx` | `file:index.html`, `file:src/main.tsx` |
-| Core logic | `App.tsx` | `file:src/App.tsx` (+ 8 function nodes) |
-| Styling | `App.css` | `file:src/App.css` |
-| Domo manifest | `manifest.json` | `config:public/manifest.json` |
-| NPM deps + scripts | `package.json` | `config:package.json` |
-| TS config | `tsconfig.json`, `tsconfig.node.json` | `config:tsconfig.json`, `config:tsconfig.node.json` |
-| Build | `vite.config.ts` | `file:vite.config.ts` |
-| Local mocks | `sample-*.csv` | `table:public/sample-data.csv`, `table:public/sample-variables-registry.csv` |
-| Onboarding docs | `README.md` | `document:README.md` |
+Quick map from "the thing I'm trying to change" → the file to edit.
 
-Load the graph: `cat .understand-anything/knowledge-graph.json | jq` or
-run `/understand-anything:understand-dashboard` to navigate visually.
+| Concern | Files |
+|---|---|
+| App boot | `app/client/index.html`, `app/client/src/main.tsx` |
+| Core logic (everything the brick does) | `app/client/src/App.tsx` |
+| Styling, theme overrides | `app/client/src/App.css` |
+| Domo platform contract (datasets, AppDB, sizing, id) | `app/client/public/manifest.json` |
+| NPM deps + scripts | `app/client/package.json` |
+| TS compiler config | `app/client/tsconfig.json`, `app/client/tsconfig.node.json` |
+| Vite build | `app/client/vite.config.ts` |
+| Local-mode CSV mocks | `app/client/public/sample-data.csv`, `app/client/public/sample-variables-registry.csv` |
+| Onboarding / dev docs | `app/client/README.md`, this file |
+| End-admin install guide | `docs/SETUP.md` |
 
 ---
 
