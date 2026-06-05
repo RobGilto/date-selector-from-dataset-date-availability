@@ -1,136 +1,135 @@
 # Date Selector — Setup Guide
 
-For NAB stakeholders (Case 05930295). Step-by-step to add the Date Selector
-custom app to an App Studio page and wire it to your existing variable.
+For NAB stakeholders (Case 05930295). Drop-in date control that replaces
+Domo's native date filter and drives any App Studio variable on the page.
+
+---
 
 ## What it does
 
-Replaces the native Date control on an App Studio page. Shows a calendar (or
-dropdown list) of **only the dates that exist in your bound dataset** — no
-empty days are clickable. When a user picks a date, the app updates a Domo
-variable; any card filtered by that variable refreshes.
+- Renders a calendar (or dropdown list) showing **only the dates present in
+  the bound dataset** — empty days greyed out.
+- When a user picks a date, the brick fires `requestVariablesUpdate` on the
+  configured variable. Any card filtered by that variable refreshes.
+- Configuration is **per-card** and **persists** in an AppDB collection.
+  Admin sets it once; end users see only the calendar.
 
-## One-time install
+---
 
-1. Asset Library → Apps → **+ Add App** → **Upload Design** → drop the supplied
-   `nab-calendar-dist.zip`.
-2. Domo creates a new design called "Date Selector". Note the new design ID
-   (or just find it by name later).
-3. Open the design once. On the configuration screen, bind the dataset:
-   - **Dataset alias:** `sampleData` (this is the brick's internal name — do
-     not change)
-   - **Source dataset:** select the dataset whose dates you want surfaced
-   - **Required column:** `Date` (case-sensitive). Column must contain the
-     dates you want users to pick.
+## 0. Prereqs
 
-## Add to an App Studio page
+- App design **Date Selector** already exists in your tenant (id
+  `4896fd53-0232-42d3-b31b-7be12b50e6ed`). If not, upload
+  `nab-calendar-1.0.4.zip` via Asset Library → Apps → ⋮ → Upload Design.
+- Dataset with a `Date` column (literal name, case-sensitive).
+- At least one App Studio Date-typed variable on the page that some cards
+  use as a filter (e.g. `vTillSelectedMonth`).
 
-1. App Studio → open or create the page that will host the selector.
-2. **+ Card** → **Custom App** → pick **Date Selector** from the list.
-3. Place the card where the old date control was. Resize as needed; minimum
-   useful size = 2×1 (two columns wide, one row tall).
-4. The card will appear empty until you tell it which Domo variable to drive.
+---
 
-## Wire the variable (preferred: name-based via registry dataset)
+## 1. Add the card to an App Studio page
 
-v1.2 adds a **variable name registry** — a small dataset NAB maintains
-listing every App Studio variable the brick is allowed to drive. The brick
-resolves names to function IDs at runtime, so:
+1. App Studio → open the page (Edit mode).
+2. **+ Card** → **Custom App** → search **Date Selector**.
+3. Place the card; minimum useful size 2×1.
 
-- Config reads in English (`vTillSelectedMonth`) instead of magic numbers.
-- Function IDs can churn (App Studio rebuilds them on variable edits) —
-  names stay stable.
-- One dataset = one source of truth for every custom app you build later.
+---
 
-### 1. Create the registry dataset (one-time, ~5 minutes)
+## 2. Bind the dataset
 
-Two columns: `Variable` (the App Studio variable name, e.g.
-`vTillSelectedMonth`) and `VariableID` (its function ID number).
+In the right-hand Properties panel for the brick:
 
-Options to create it:
+1. `sampleData` alias → pick the dataset whose dates you want surfaced.
+   Required column: `Date`.
+2. `variablesDataSet` alias → **leave unbound** unless you want the
+   advanced "variable registry by name" feature (rarely needed —
+   auto-detect handles single-variable cases). Domo will warn that an
+   alias is unbound; ignore.
 
-- **CSV upload via Workbench / File Upload Connector** — author a CSV with the
-  two columns, upload it, name the resulting dataset `nab-variables-registry`
-  (or whatever you prefer).
-- **Magic ETL output** — if you want it data-driven, build a dataflow that
-  pulls from an internal source. Otherwise CSV upload is fine.
+---
 
-Starter template lives in the brick zip under
-`sample-variables-registry.csv` — use it as your column reference.
+## 3. Configure which variable to drive (admin, one-time)
 
-### 2. Find each variable's function ID
+1. Click the brick's **gear ⚙** (top-right of the card).
+2. Settings panel opens. The first section is **Variable Configuration**.
+3. The dropdown labelled "Detected on this page" lists every App Studio
+   variable that's pushed a value to this brick on load. Two groups:
+   - **Date-typed** — variables whose live value looks like an ISO date
+     OR whose name contains `date|month|day|year|period|till|start|end`.
+     These are what this brick is designed to drive.
+   - **Other detected** — non-date variables, surfaced for fallback in
+     case the heuristic misses something.
+4. Pick the variable that drives your filtered cards. For NAB this is
+   typically **`vTillSelectedMonth`** (functionId `131272`).
+5. Selection auto-saves to the brick's AppDB collection
+   (`nab-date-selector-settings`). Panel can be closed.
+6. Verify the green confirmation line at the bottom of the panel:
+   `Active: single=131272, start=none, end=none`
 
-Per-page (page-level variables) and per-card (card-level variables) both use
-the same `functionId` scheme. To capture them:
+> **Persistence:** the chosen variable is stored per-card in AppDB.
+> Refreshing the page, signing out, or switching between devices keeps the
+> same configuration. End users never see the gear panel unless an admin
+> opens it.
 
-1. Open the App Studio page containing the card the brick will drive, in
-   **edit mode**.
-2. Click the **gear (⚙)** in the brick's top-right corner.
-3. Copy the snippet shown under "Discover variable IDs" and paste it into
-   your browser's dev console (`Cmd ⌥ J` / `Ctrl Shift J`). Press Enter.
-4. Console prints a table — copy the `name` and `functionId` of each
-   variable you want the brick to drive into your registry CSV.
-5. Re-upload the CSV to refresh the dataset.
+---
 
-### 3. Bind the registry dataset to the brick
+## 4. End-user behaviour
 
-1. In App Studio, edit the card → **Dataset bindings** panel.
-2. The brick exposes an alias called `variablesDataSet` (separate from
-   the main `sampleData` binding).
-3. Select your registry dataset for that alias.
+- **Calendar view (default)** — months side-by-side; only in-dataset days
+  are clickable. Headers render as `2026 – Sep` (YYYY – MMM).
+- **List view (≡ icon)** — dropdown listing every available date,
+  descending (latest first), formatted `YYYY – MMM – DD`.
+- Picking a date pushes the raw ISO date to the configured variable.
+  Filtered cards re-render.
 
-### 4. Configure the brick
+---
 
-1. Click the **gear (⚙)** in the brick.
-2. The **Variable name (preferred)** field has autocomplete — start typing
-   the variable name; matches from the registry appear.
-3. Click **Save**.
-4. Pick a date in the calendar — cards bound to that variable refresh.
+## 5. Re-configure or clear
 
-> **Tip:** The "Single date variable ID (legacy fallback)" field still
-> works. If you fill that and leave Variable name blank, the brick uses the
-> raw ID — same behaviour as v1.0/v1.1. Useful for quick smoke-tests
-> before standing up the registry.
+- **Change the variable:** gear ⚙ → pick a different entry from the
+  dropdown → auto-saves.
+- **Wipe configuration:** gear ⚙ → **Reset**. Both the config doc and
+  any persisted picked date are deleted from AppDB.
 
-## Endpoint mode (advanced — usually leave default)
+---
 
-The brick supports two filtering styles. Toggle in the gear panel under
-**Endpoint mode**:
+## 6. Sandbox / security notes
 
-- **Inclusive (default)** — shifts the pushed date by ±1 day so cards using
-  `Date < vTillSelectedMonth` (exclusive comparison) still include the picked
-  date. This matches NAB's current beast modes.
-- **Raw** — pushes the picked ISO date verbatim. Use only if your downstream
-  filter uses `BETWEEN ... AND ...`, `<=`, or `>=` (inclusive comparisons).
+- The brick lives inside Domo's standard custom-app iframe sandbox.
+- Variable detection uses Domo's documented `domo.onVariablesUpdated`
+  event — no DOM scraping, no private REST endpoints.
+- The settings panel offers a manual "Discover variable IDs" snippet (a
+  one-liner you paste into the browser console). It only hits the Domo
+  page's `variable/controls/list` endpoint and prints names + IDs to your
+  console. No data leaves your tenant. Review the code in `App.tsx` if
+  your security team requires it.
 
-## Sandbox / security note
-
-The variable-discovery snippet hits a single Domo endpoint
-(`/api/content/v1/pages/{pageId}/variable/controls/list`) inside your own
-tenant. It reads variable metadata only — no data rows, no content. Review
-the snippet in `App.tsx` before running if your security team requires it.
-
-The brick itself never makes outbound calls — it talks only to:
-- The bound dataset, via Domo's data proxy
-- The bound AppDB collection (`nab-date-selector-settings`) to persist the
-  configured variable ID
-- The Domo variable API to push the picked date
+---
 
 ## Troubleshooting
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| All dates greyed out | `Date` column missing or named differently | Check dataset has a column literally named `Date`. Re-bind. |
-| Picked date doesn't filter cards | Variable ID not configured | Open gear → confirm `Single date variable ID` is set. Pick a date again. |
-| Cards exclude the picked date | Downstream beast mode uses `<` not `<=` | Leave Endpoint mode = Inclusive. Brick will shift ±1 day automatically. |
-| Want to wipe config | Bad variable ID stored | Gear → **Reset**. Removes both config and last-picked-date docs. |
-| Dropdown shows oldest first | Old version | Update to current `nab-calendar-dist.zip`. List view sorts descending. |
+| Every day greyed out | `Date` column missing or differently named | Confirm bound dataset has a literal `Date` column. Re-bind. |
+| Picking a date doesn't filter | No variable selected in gear panel | Open gear → pick from dropdown → reload card. |
+| Wrong variable selected | Date-typed heuristic misclassified or someone hit the wrong row | Reopen gear → pick again. Auto-saves. |
+| Cards exclude the picked date | Downstream beast mode uses `<` not `<=` | Update the beast mode to `<=`. Brick now pushes raw dates (no compensation). |
+| Dropdown is empty | Page has no Date-typed variables, or they haven't fired to the iframe yet | Add a Date variable to the page in App Studio. Save the page; refresh. |
+| Dropdown sort order wrong | You're on a pre-1.0.3 version | Upload the latest zip via Asset Library. |
+| Want to wipe config | Bad setup, starting over | Gear → Reset. |
 
-## What's NOT included this release
+---
+
+## What's NOT in this release (v1.0.4)
 
 - **Between (date range) mode** — built but hidden pending stakeholder
-  use-case confirmation. We can re-enable with a one-line code flag once
-  the requirement is locked in.
+  use-case confirmation. Re-enable with a one-line code flag.
+- **Driving multiple variables in one pick** — single variable per card
+  only. Add a second card or wait for v1.1 if multi-target needed.
+- **Variable name registry** — `variablesDataSet` alias is wired but
+  optional. Use for ID-churn resilience or cross-app reuse only.
+
+---
 
 ## Support
 
