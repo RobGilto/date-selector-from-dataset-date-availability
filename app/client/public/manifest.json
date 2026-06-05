@@ -35,6 +35,10 @@
             "type": "STRING"
           },
           {
+            "name": "variableName",
+            "type": "STRING"
+          },
+          {
             "name": "functionId",
             "type": "LONG"
           },

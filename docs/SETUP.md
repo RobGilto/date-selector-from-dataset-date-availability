@@ -31,36 +31,66 @@ variable; any card filtered by that variable refreshes.
    useful size = 2×1 (two columns wide, one row tall).
 4. The card will appear empty until you tell it which Domo variable to drive.
 
-## Wire the variable ID
+## Wire the variable (preferred: name-based via registry dataset)
 
-The brick can't auto-discover variables across the Domo sandbox boundary, so
-you give it the variable's function ID once.
+v1.2 adds a **variable name registry** — a small dataset NAB maintains
+listing every App Studio variable the brick is allowed to drive. The brick
+resolves names to function IDs at runtime, so:
 
-### Find the variable's function ID
+- Config reads in English (`vTillSelectedMonth`) instead of magic numbers.
+- Function IDs can churn (App Studio rebuilds them on variable edits) —
+  names stay stable.
+- One dataset = one source of truth for every custom app you build later.
 
-1. Open the App Studio page that contains the card in **edit mode**.
-2. Open the browser's developer console (`Cmd ⌥ J` on Mac / `Ctrl Shift J` on
-   Windows).
-3. In the card, click the **gear icon (⚙)** in the top-right corner.
-4. Copy the snippet shown under "Discover variable IDs" and paste it into the
-   console. Press Enter.
-5. The console prints a table of every variable bound to the page, with
-   columns `name`, `functionId`, `dataType`. Find the row for the variable
-   your cards are filtered by (usually a Date variable — e.g.
-   `vTillSelectedMonth`). Copy its `functionId`.
+### 1. Create the registry dataset (one-time, ~5 minutes)
 
-### Tell the brick
+Two columns: `Variable` (the App Studio variable name, e.g.
+`vTillSelectedMonth`) and `VariableID` (its function ID number).
 
-1. Back in the card's settings panel, paste the `functionId` into the
-   **Single date variable ID** field.
-2. Click **Save**. Settings panel closes; you'll see "Active: single=<id>"
-   under the panel when you reopen it.
-3. Pick a date in the calendar. Any card on the page filtered by that
-   variable should refresh.
+Options to create it:
 
-> **Tip:** Once the brick detects the variable on the page (you've opened
-> the gear panel at least once), it stores the ID in the brick's own AppDB
-> collection. End users never see this — they just see the calendar.
+- **CSV upload via Workbench / File Upload Connector** — author a CSV with the
+  two columns, upload it, name the resulting dataset `nab-variables-registry`
+  (or whatever you prefer).
+- **Magic ETL output** — if you want it data-driven, build a dataflow that
+  pulls from an internal source. Otherwise CSV upload is fine.
+
+Starter template lives in the brick zip under
+`sample-variables-registry.csv` — use it as your column reference.
+
+### 2. Find each variable's function ID
+
+Per-page (page-level variables) and per-card (card-level variables) both use
+the same `functionId` scheme. To capture them:
+
+1. Open the App Studio page containing the card the brick will drive, in
+   **edit mode**.
+2. Click the **gear (⚙)** in the brick's top-right corner.
+3. Copy the snippet shown under "Discover variable IDs" and paste it into
+   your browser's dev console (`Cmd ⌥ J` / `Ctrl Shift J`). Press Enter.
+4. Console prints a table — copy the `name` and `functionId` of each
+   variable you want the brick to drive into your registry CSV.
+5. Re-upload the CSV to refresh the dataset.
+
+### 3. Bind the registry dataset to the brick
+
+1. In App Studio, edit the card → **Dataset bindings** panel.
+2. The brick exposes an alias called `variablesDataSet` (separate from
+   the main `sampleData` binding).
+3. Select your registry dataset for that alias.
+
+### 4. Configure the brick
+
+1. Click the **gear (⚙)** in the brick.
+2. The **Variable name (preferred)** field has autocomplete — start typing
+   the variable name; matches from the registry appear.
+3. Click **Save**.
+4. Pick a date in the calendar — cards bound to that variable refresh.
+
+> **Tip:** The "Single date variable ID (legacy fallback)" field still
+> works. If you fill that and leave Variable name blank, the brick uses the
+> raw ID — same behaviour as v1.0/v1.1. Useful for quick smoke-tests
+> before standing up the registry.
 
 ## Endpoint mode (advanced — usually leave default)
 
