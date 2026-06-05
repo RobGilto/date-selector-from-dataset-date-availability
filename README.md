@@ -9,6 +9,16 @@ filtered by that variable refresh whenever the user picks a date.
 - **Persistence** — selected variable + last picked date stored in an
   AppDB collection (`date-selector-settings`)
 
+## Documentation
+
+- **User documentation** → [`docs/SETUP.md`](docs/SETUP.md) — admin
+  install + per-page configuration walkthrough (audience: Domo admins
+  dropping the brick on a page).
+- **Developer documentation** → [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md)
+  — engineer-facing deep-dive on architecture, file index, dev workflow,
+  build + publish (ryuu / domo login), and troubleshooting (audience:
+  anyone extending or debugging this codebase).
+
 ## How persistence works (zero-touch collection setup)
 
 The AppDB collection is **declared in `manifest.json` under
@@ -91,12 +101,6 @@ npx ryuu publish    # first time: npx ryuu login -i <instance>.domo.com
 After the first publish, paste the returned design GUID into
 `app/client/public/manifest.json` under `id` so subsequent publishes
 update the same design instead of creating a new one.
-
-## Documentation
-
-- [`docs/SETUP.md`](docs/SETUP.md) — admin install + per-page configuration
-- [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md) — engineer-facing deep-dive
-  (architecture, file index, dev workflow, troubleshooting)
 
 ## Stack
 
