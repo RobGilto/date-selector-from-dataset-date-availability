@@ -1,0 +1,329 @@
+{
+  "version": "1.0.0",
+  "gitCommitHash": "59eced3907e01ceb0dc7d2f55d4d7d81d3384b5a",
+  "generatedAt": "2026-06-05T02:30:10.896Z",
+  "files": {
+    "index.html": {
+      "filePath": "index.html",
+      "contentHash": "b65ce2810ffd8fc3334904bce0f6ba78a5bf718c3802d609f85e4a161e2056a3",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 13,
+      "hasStructuralAnalysis": false
+    },
+    "package.json": {
+      "filePath": "package.json",
+      "contentHash": "96df16fc117e8a4cabef9a84e47df82e831a5f7a36fea6fa51e8deeb62bafe0c",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 25,
+      "hasStructuralAnalysis": true
+    },
+    "public/manifest.json": {
+      "filePath": "public/manifest.json",
+      "contentHash": "8ed785e83361aa94f0f19499c2d6424bb96e5b055ff3278dd8adb9cda80b1315",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 90,
+      "hasStructuralAnalysis": true
+    },
+    "public/sample-data.csv": {
+      "filePath": "public/sample-data.csv",
+      "contentHash": "038a51f386f21e626f9b510acf5e7a5be49547e5ac01d3ee9e8d1d23f4e74cba",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 18,
+      "hasStructuralAnalysis": false
+    },
+    "public/sample-variables-registry.csv": {
+      "filePath": "public/sample-variables-registry.csv",
+      "contentHash": "c02dd4e180c6e30d272a6b2689fcaf5a0b08ebf8d2617846c03c1f838ce4f027",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 4,
+      "hasStructuralAnalysis": false
+    },
+    "README.md": {
+      "filePath": "README.md",
+      "contentHash": "c1aae80bc323b085f2511f44df6929e5fc2e550c91664b63529628db92a3d8d0",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 170,
+      "hasStructuralAnalysis": true
+    },
+    "src/App.css": {
+      "filePath": "src/App.css",
+      "contentHash": "fda21a1e858e05190a39e145d1b28e28c27e7fac0ed4653aca9cf4669aeef134",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 426,
+      "hasStructuralAnalysis": false
+    },
+    "src/App.tsx": {
+      "filePath": "src/App.tsx",
+      "contentHash": "b11bb1342033f22c681676543b88480b497953b78713e4ca74cba89290c2b31f",
+      "functions": [
+        {
+          "name": "toISO",
+          "params": [
+            "d"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "isoToDate",
+          "params": [
+            "iso"
+          ],
+          "returnType": "Date",
+          "exported": false,
+          "lineCount": 4
+        },
+        {
+          "name": "formatMonthLabel",
+          "params": [
+            "d"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "formatDateLabel",
+          "params": [
+            "d"
+          ],
+          "returnType": "string",
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "readLocalDocs",
+          "params": [],
+          "returnType": "{ id: string; content: CollectionDoc }[]",
+          "exported": false,
+          "lineCount": 7
+        },
+        {
+          "name": "writeLocalDocs",
+          "params": [
+            "docs"
+          ],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "mkLocalId",
+          "params": [],
+          "exported": false,
+          "lineCount": 3
+        },
+        {
+          "name": "fetchLocalRegistry",
+          "params": [],
+          "returnType": "Promise<Map<string, number>>",
+          "exported": false,
+          "lineCount": 22
+        },
+        {
+          "name": "resolveVarIds",
+          "params": [],
+          "returnType": "Promise<Map<string, number>>",
+          "exported": false,
+          "lineCount": 29
+        },
+        {
+          "name": "fetchLocalDates",
+          "params": [],
+          "returnType": "Promise<string[]>",
+          "exported": false,
+          "lineCount": 14
+        },
+        {
+          "name": "notifyDetected",
+          "params": [],
+          "exported": false,
+          "lineCount": 9
+        },
+        {
+          "name": "registerVariablesListener",
+          "params": [],
+          "exported": false,
+          "lineCount": 30
+        },
+        {
+          "name": "discoverViaPageControls",
+          "params": [],
+          "returnType": "Promise<DetectedVar[]>",
+          "exported": false,
+          "lineCount": 26
+        },
+        {
+          "name": "CalIcon",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "ListIcon",
+          "params": [],
+          "exported": false,
+          "lineCount": 5
+        },
+        {
+          "name": "GearIcon",
+          "params": [],
+          "exported": false,
+          "lineCount": 6
+        },
+        {
+          "name": "App",
+          "params": [],
+          "exported": true,
+          "lineCount": 852
+        }
+      ],
+      "classes": [],
+      "imports": [
+        {
+          "source": "react",
+          "specifiers": [
+            "useEffect",
+            "useState",
+            "useRef",
+            "useCallback",
+            "useMemo"
+          ]
+        },
+        {
+          "source": "react-day-picker",
+          "specifiers": [
+            "DayPicker",
+            "DateRange"
+          ]
+        },
+        {
+          "source": "date-fns",
+          "specifiers": [
+            "format",
+            "startOfMonth",
+            "endOfMonth",
+            "subDays",
+            "startOfYear"
+          ]
+        },
+        {
+          "source": "ryuu.js",
+          "specifiers": [
+            "domo"
+          ]
+        },
+        {
+          "source": "react-day-picker/style.css",
+          "specifiers": []
+        },
+        {
+          "source": "./App.css",
+          "specifiers": []
+        }
+      ],
+      "exports": [
+        "App"
+      ],
+      "totalLines": 1179,
+      "hasStructuralAnalysis": true
+    },
+    "src/main.tsx": {
+      "filePath": "src/main.tsx",
+      "contentHash": "e51601779c618aeb80e945798253ad2d50278797191c5fac4d3478e5541d0c8c",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "react",
+          "specifiers": [
+            "StrictMode"
+          ]
+        },
+        {
+          "source": "react-dom/client",
+          "specifiers": [
+            "createRoot"
+          ]
+        },
+        {
+          "source": "./App",
+          "specifiers": [
+            "App"
+          ]
+        },
+        {
+          "source": "./App.css",
+          "specifiers": []
+        }
+      ],
+      "exports": [],
+      "totalLines": 11,
+      "hasStructuralAnalysis": true
+    },
+    "tsconfig.json": {
+      "filePath": "tsconfig.json",
+      "contentHash": "e09b1d7398a757eae35c19efcd50710803fe8df7e8d6414d2b6f595166ebf906",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 22,
+      "hasStructuralAnalysis": true
+    },
+    "tsconfig.node.json": {
+      "filePath": "tsconfig.node.json",
+      "contentHash": "bb9fd8592a9e364641441219f10d84daae9ba2ca5cc85db798efad6913bb8257",
+      "functions": [],
+      "classes": [],
+      "imports": [],
+      "exports": [],
+      "totalLines": 12,
+      "hasStructuralAnalysis": true
+    },
+    "vite.config.ts": {
+      "filePath": "vite.config.ts",
+      "contentHash": "dde39f59a7a9ebecf0e1e733914389173cd2831aa4571d7dc93beaee75b2d0e2",
+      "functions": [],
+      "classes": [],
+      "imports": [
+        {
+          "source": "vite",
+          "specifiers": [
+            "defineConfig"
+          ]
+        },
+        {
+          "source": "@vitejs/plugin-react",
+          "specifiers": [
+            "react"
+          ]
+        }
+      ],
+      "exports": [],
+      "totalLines": 8,
+      "hasStructuralAnalysis": true
+    }
+  }
+}
