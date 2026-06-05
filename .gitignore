@@ -50,3 +50,7 @@ app_docs/*.har
 # Playwright artifacts
 .playwright-mcp/
 playwright-reports/
+
+# Publish artifacts — built per-release, not source of truth
+app/client/nab-calendar-dist/
+app/client/nab-calendar-dist.zip
