@@ -931,26 +931,61 @@ export default function App() {
         <div className="settings-panel">
           <label className="settings-label">Variable Configuration</label>
 
-          {detected.length > 0 && (
-            <div className="settings-detected">
-              <p className="settings-hint">
-                Detected on this page (click to use as single-date variable):
-              </p>
-              {detected.map((v) => (
-                <button
-                  key={v.functionId}
-                  className="settings-detected-btn"
-                  onClick={() => {
-                    applyFunctionId(v.functionId);
-                    persistSettings({ functionId: v.functionId }, true);
+          {detected.length > 0 && (() => {
+            // Surface date-typed vars first — they're what this brick can drive.
+            // 'value' on a detected var is the live variable value pushed by
+            // App Studio; an ISO-date shape is the strongest signal.
+            const isDateShaped = (v: DetectedVar) =>
+              typeof v.value === 'string' &&
+              /^\d{4}-\d{2}-\d{2}/.test(String(v.value));
+            const isDateNamed = (v: DetectedVar) =>
+              !!v.name && /date|month|day|year|period|till|start|end/i.test(v.name);
+            const dateVars = detected.filter((v) => isDateShaped(v) || isDateNamed(v));
+            const otherVars = detected.filter(
+              (v) => !(isDateShaped(v) || isDateNamed(v))
+            );
+            return (
+              <div className="settings-detected">
+                <p className="settings-hint">
+                  Detected on this page — pick the variable this brick should
+                  drive ({dateVars.length} date-typed, {otherVars.length} other):
+                </p>
+                <select
+                  className="settings-input"
+                  value={functionId ?? ''}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (!v) return;
+                    const fid = Number(v);
+                    if (!Number.isFinite(fid)) return;
+                    applyFunctionId(fid);
+                    persistSettings({ functionId: fid }, true);
                   }}
                 >
-                  {v.name || `Variable ${v.functionId}`}{' '}
-                  <span className="settings-fid">({v.functionId})</span>
-                </button>
-              ))}
-            </div>
-          )}
+                  <option value="">— select a variable —</option>
+                  {dateVars.length > 0 && (
+                    <optgroup label="Date-typed">
+                      {dateVars.map((v) => (
+                        <option key={v.functionId} value={v.functionId}>
+                          {(v.name || `Variable ${v.functionId}`)} ({v.functionId})
+                          {typeof v.value === 'string' ? ` — current: ${v.value}` : ''}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                  {otherVars.length > 0 && (
+                    <optgroup label="Other detected">
+                      {otherVars.map((v) => (
+                        <option key={v.functionId} value={v.functionId}>
+                          {(v.name || `Variable ${v.functionId}`)} ({v.functionId})
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
+                </select>
+              </div>
+            );
+          })()}
 
           <div className="settings-snippet-block">
             <p className="settings-hint">
