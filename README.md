@@ -9,6 +9,40 @@ filtered by that variable refresh whenever the user picks a date.
 - **Persistence** — selected variable + last picked date stored in an
   AppDB collection (`date-selector-settings`)
 
+## How persistence works (zero-touch collection setup)
+
+The AppDB collection is **declared in `manifest.json` under
+`collectionsMapping`** — Domo auto-provisions it the first time the
+design is installed in a tenant. The admin never opens AppDB to create a
+collection or define a schema.
+
+What happens on install:
+
+1. Admin uploads the design (Asset Library → Apps → Upload Design).
+2. Domo reads `collectionsMapping`, creates a collection literally named
+   `date-selector-settings`, applies the declared schema (`type`,
+   `variableName`, `functionId`, `mode`, range fields, `singleDate`,
+   `rangeStart`, `rangeEnd`), and applies permissions (`ADMIN`
+   read/write/delete, `USER` read).
+3. Brick code calls `/domo/datastores/v1/collections/date-selector-settings/...`
+   directly. No bootstrap step, no admin clicks.
+
+Two documents live in the collection per configured card:
+
+- **`type:"config"`** — admin-set variable wiring (`functionId` or
+  `variableName`)
+- **`type:"state"`** — last picked date(s); used to restore selection on
+  reload
+
+Reset (gear → Reset) deletes both docs. Schema changes in `manifest.json`
+on a subsequent publish trigger a schema migration the next time the
+design is installed.
+
+> **Caveat:** all instances of the brick on the same Domo tenant share
+> the same collection. For now the brick assumes one configured doc set
+> per tenant — multiple cards on different pages will read each other's
+> docs. Document keying per card-instance is a future enhancement.
+
 ## How variable wiring works
 
 1. **Auto-detect (primary)** — the brick subscribes to
