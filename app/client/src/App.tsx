@@ -1026,24 +1026,35 @@ export default function App() {
             </p>
           </div>
 
-          {/* Legacy numeric ID — hidden under disclosure as a fallback only */}
-          <details className="settings-group">
-            <summary className="settings-sublabel" style={{ cursor: 'pointer' }}>
-              Advanced — legacy numeric variable ID
-            </summary>
+          {/* Numeric variable ID — always visible. The registry path is
+              preferred but many NAB pages don't have the registry dataset
+              bound yet, so the numeric ID is the practical fallback. */}
+          <div className="settings-group">
+            <label className="settings-sublabel">
+              Variable ID (numeric)
+            </label>
             <input
               className="settings-input"
               type="number"
-              placeholder="e.g. 131272 (only if no registry binding)"
+              placeholder="e.g. 131272"
               value={inputFid}
               onChange={(e) => setInputFid(e.target.value)}
-              style={{ marginTop: '4px' }}
             />
             <p className="settings-hint">
-              Only used when the variables registry dataset is unbound or
-              missing the configured variable name. Prefer Variable name above.
+              Used when Variable name above is empty or not found in the
+              registry dataset. Click <strong>Save</strong> below to apply.
             </p>
-          </details>
+          </div>
+
+          {/* No-wiring warning — surface when neither path will resolve */}
+          {!variableName && (functionId === null || Number.isNaN(parseInt(inputFid, 10))) && (
+            <p className="range-config-warn">
+              ⚠ No variable bound. Either type a Variable name above (if the
+              registry dataset is bound) OR enter a numeric Variable ID and
+              click Save. Picking a date will not filter cards until one of
+              these is set.
+            </p>
+          )}
 
           {!HIDE_BETWEEN && (
           <div className="settings-group">
