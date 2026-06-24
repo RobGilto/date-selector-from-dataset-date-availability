@@ -4,6 +4,7 @@ import { format, startOfMonth, endOfMonth, subDays, startOfYear } from 'date-fns
 import domo from 'ryuu.js';
 import 'react-day-picker/style.css';
 import './App.css';
+import { resolveRole, type Role } from './lib/role';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DATASET_ALIAS = 'sampleData';
@@ -23,12 +24,23 @@ const IS_LOCAL =
   window.location.hostname === 'localhost' ||
   window.location.hostname === '127.0.0.1';
 
+// Per-card identity — v1.2 scopes every AppDB doc to a specific card-instance
+// so two bricks on the same page hold independent settings.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const CURRENT_CARD_ID: string =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  String(((domo as any).env?.cardId ?? '').toString().trim() || 'local-card-001');
+
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SelectionMode = 'single' | 'between';
 type ViewMode = 'calendar' | 'list';
+type DateFormat = 'YYYY-MMM' | 'YYYY-MMM-DD' | 'YYYY-MM-DD';
 
 interface ConfigDoc {
   type?: 'config';
+  // v1.2: card-instance discriminator. Older docs without this field are
+  // treated as a design-wide default at load time.
+  cardId?: string;
   // Preferred (v1.2+): variable identified by NAME, resolved via registry dataset.
   variableName?: string;
   // Legacy: variable identified by raw functionId. Used as fallback when no
@@ -37,10 +49,14 @@ interface ConfigDoc {
   mode?: SelectionMode;
   rangeStartFunctionId?: number;
   rangeEndFunctionId?: number;
+  // v1.2: per-card view + format preferences.
+  viewMode?: ViewMode;
+  dateFormat?: DateFormat;
 }
 
 interface StateDoc {
   type: 'state';
+  cardId?: string;
   singleDate?: string;
   rangeStart?: string;
   rangeEnd?: string;
@@ -68,8 +84,14 @@ function formatMonthLabel(d: Date): string {
   return `${d.getFullYear()} ${EN_DASH} ${format(d, 'MMM')}`;
 }
 
-function formatDateLabel(d: Date): string {
-  return `${d.getFullYear()} ${EN_DASH} ${format(d, 'MMM')} ${EN_DASH} ${String(d.getDate()).padStart(2, '0')}`;
+function formatDateLabel(d: Date, fmt: DateFormat = 'YYYY-MMM-DD'): string {
+  const y = d.getFullYear();
+  const m = format(d, 'MMM');
+  const day = String(d.getDate()).padStart(2, '0');
+  const mNum = String(d.getMonth() + 1).padStart(2, '0');
+  if (fmt === 'YYYY-MMM') return `${y} ${EN_DASH} ${m}`;
+  if (fmt === 'YYYY-MM-DD') return `${y}-${mNum}-${day}`;
+  return `${y} ${EN_DASH} ${m} ${EN_DASH} ${day}`;
 }
 
 // ── Collection backend ──────────────────────────────────────────────────────
@@ -275,33 +297,6 @@ function registerVariablesListener() {
   }
 }
 
-async function discoverViaPageControls(): Promise<DetectedVar[]> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const env = (domo as any).env;
-    const pageId = env?.pageId;
-    if (!pageId) return [];
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const data = await (domo as any).get(
-      `/api/content/v1/pages/${pageId}/variable/controls/list`
-    );
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const controls: any[] = Array.isArray(data) ? data : (data?.controls ?? []);
-    return controls
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .map((c: any) => {
-        const fid = c?.function?.id ?? c?.functionId;
-        const name = c?.function?.name ?? c?.name;
-        if (typeof fid !== 'number' && !Number.isFinite(Number(fid)))
-          return null;
-        return { functionId: Number(fid), name } as DetectedVar;
-      })
-      .filter((v): v is DetectedVar => v !== null);
-  } catch {
-    return [];
-  }
-}
-
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const CalIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
@@ -319,9 +314,6 @@ const GearIcon = () => (
     <path d="M9.796 1.343c-.527-1.79-3.065-1.79-3.592 0l-.094.319a.873.873 0 0 1-1.255.52l-.292-.16c-1.64-.892-3.433.902-2.54 2.541l.159.292a.873.873 0 0 1-.52 1.255l-.319.094c-1.79.527-1.79 3.065 0 3.592l.319.094a.873.873 0 0 1 .52 1.255l-.16.292c-.892 1.64.901 3.434 2.541 2.54l.292-.159a.873.873 0 0 1 1.255.52l.094.319c.527 1.79 3.065 1.79 3.592 0l.094-.319a.873.873 0 0 1 1.255-.52l.292.16c1.64.893 3.434-.902 2.54-2.541l-.159-.292a.873.873 0 0 1 .52-1.255l.319-.094c1.79-.527 1.79-3.065 0-3.592l-.319-.094a.873.873 0 0 1-.52-1.255l.16-.292c.893-1.64-.902-3.433-2.541-2.54l-.292.159a.873.873 0 0 1-1.255-.52l-.094-.319zm-2.633.283c.246-.835 1.428-.835 1.674 0l.094.319a1.873 1.873 0 0 0 2.693 1.115l.291-.16c.764-.415 1.6.42 1.184 1.185l-.159.292a1.873 1.873 0 0 0 1.116 2.692l.318.094c.835.246.835 1.428 0 1.674l-.319.094a1.873 1.873 0 0 0-1.115 2.693l.16.291c.415.764-.42 1.6-1.185 1.184l-.291-.159a1.873 1.873 0 0 0-2.693 1.116l-.094.318c-.246.835-1.428.835-1.674 0l-.094-.319a1.873 1.873 0 0 0-2.692-1.115l-.292.16c-.764.415-1.6-.42-1.184-1.185l.159-.291A1.873 1.873 0 0 0 1.945 8.93l-.319-.094c-.835-.246-.835-1.428 0-1.674l.319-.094A1.873 1.873 0 0 0 3.06 4.377l-.16-.292c-.415-.764.42-1.6 1.185-1.184l.292.159a1.873 1.873 0 0 0 2.692-1.115l.094-.319z" />
   </svg>
 );
-
-const DISCOVERY_SNIPPET =
-  '(async()=>{const m=location.pathname.match(/\\/pages?\\/(\\d+)/);if(!m)return console.error("not on a Domo page");const r=await fetch(`/api/content/v1/pages/${m[1]}/variable/controls/list`);const d=await r.json();const rows=(Array.isArray(d)?d:d.controls||[]).map(c=>({name:c.function?.name||c.name||"?",functionId:c.function?.id||c.functionId,dataType:c.function?.dataType||c.dataType||"?"}));console.table(rows)})()';
 
 // ── Component ──────────────────────────────────────────────────────────────────
 export default function App() {
@@ -356,11 +348,18 @@ export default function App() {
   const [variableName, setVariableName] = useState<string>('');
   const [registry, setRegistry] = useState<Map<string, number>>(new Map());
 
+  // v1.2: per-card view + format preferences.
+  const [dateFormat, setDateFormat] = useState<DateFormat>('YYYY-MMM-DD');
+  const dateFormatRef = useRef<DateFormat>('YYYY-MMM-DD');
+  const viewModeRef = useRef<ViewMode>('calendar');
+
+  // v1.2: role-gated rendering. Admin sees toolbar + gear, user sees content only.
+  const [role, setRole] = useState<Role>(IS_LOCAL ? 'admin' : 'user');
+
   // Settings inputs
   const [inputFid, setInputFid] = useState(String(DEFAULT_SINGLE_FID));
   const [inputRangeStartFid, setInputRangeStartFid] = useState('');
   const [inputRangeEndFid, setInputRangeEndFid] = useState('');
-  const [copied, setCopied] = useState(false);
   const [autoDetected, setAutoDetected] = useState(false);
   const [detected, setDetected] = useState<DetectedVar[]>([]);
 
@@ -376,15 +375,17 @@ export default function App() {
     const onChange = () => setDetected(Array.from(detectedVars.values()));
     detectedVarsListeners.add(onChange);
     onChange();
-    if (!IS_LOCAL) {
-      discoverViaPageControls().then((vars) => {
-        vars.forEach((v) => detectedVars.set(v.functionId, v));
-        if (vars.length > 0) notifyDetected();
-      });
-    }
+    // v1.2: page-controls REST discovery dropped — onVariablesUpdated event
+    // bus is the only auto-detect path. Variables registry dataset handles
+    // the named-variable lookup. No more dev-console snippet workaround.
     return () => {
       detectedVarsListeners.delete(onChange);
     };
+  }, []);
+
+  // v1.2: resolve role once on mount. Result feeds the toolbar/gear gate.
+  useEffect(() => {
+    resolveRole().then(setRole).catch(() => setRole('user'));
   }, []);
 
   useEffect(() => {
@@ -448,16 +449,27 @@ export default function App() {
     try {
       const docs = await collBackend.queryAll();
 
-      // Partition by type. Legacy docs without `type` are treated as config.
-      const configDoc = docs?.find(
+      // v1.2: partition by type AND cardId. Prefer card-keyed docs; legacy
+      // docs without `cardId` are treated as a design-wide default safety net
+      // (read-only on first load — next save creates a card-keyed doc).
+      const configDocs = docs?.filter(
         (d) => d.content?.type === 'config' || d.content?.type === undefined
-      );
-      const stateDoc = docs?.find((d) => d.content?.type === 'state');
+      ) ?? [];
+      const stateDocs = docs?.filter((d) => d.content?.type === 'state') ?? [];
+      const configDoc =
+        configDocs.find((d) => (d.content as ConfigDoc).cardId === CURRENT_CARD_ID) ??
+        configDocs.find((d) => !(d.content as ConfigDoc).cardId);
+      const stateDoc =
+        stateDocs.find((d) => (d.content as StateDoc).cardId === CURRENT_CARD_ID) ??
+        stateDocs.find((d) => !(d.content as StateDoc).cardId);
 
       if (configDoc) {
         const { id, content } = configDoc;
-        configDocIdRef.current = id;
+        // Only adopt the doc id if it's already card-keyed; legacy unkeyed
+        // doc id should NOT be reused for future writes (we want a fresh
+        // card-keyed doc on next save).
         const c = content as ConfigDoc;
+        if (c.cardId === CURRENT_CARD_ID) configDocIdRef.current = id;
         const fid = c.functionId ?? DEFAULT_SINGLE_FID;
         const rsf = c.rangeStartFunctionId ?? null;
         const ref = c.rangeEndFunctionId ?? null;
@@ -465,16 +477,22 @@ export default function App() {
         // run shouldn't surface a UI we've removed.
         const mode = HIDE_BETWEEN ? 'single' : (c.mode ?? 'single');
         const vname = c.variableName ?? '';
+        const vm: ViewMode = c.viewMode ?? 'list';
+        const df: DateFormat = c.dateFormat ?? 'YYYY-MMM-DD';
         functionIdRef.current = fid;
         rangeStartFidRef.current = rsf;
         rangeEndFidRef.current = ref;
         selectionModeRef.current = mode;
         variableNameRef.current = vname || null;
+        viewModeRef.current = vm;
+        dateFormatRef.current = df;
         setFunctionId(fid);
         setRangeStartFid(rsf);
         setRangeEndFid(ref);
         setSelectionMode(mode);
         setVariableName(vname);
+        setViewMode(vm);
+        setDateFormat(df);
         setInputFid(String(fid));
         if (rsf) setInputRangeStartFid(String(rsf));
         if (ref) setInputRangeEndFid(String(ref));
@@ -482,8 +500,8 @@ export default function App() {
 
       if (stateDoc) {
         const { id, content } = stateDoc;
-        stateDocIdRef.current = id;
         const s = content as StateDoc;
+        if (s.cardId === CURRENT_CARD_ID) stateDocIdRef.current = id;
         if (s.singleDate) setSingleSelected(isoToDate(s.singleDate));
         if (s.rangeStart) {
           setRangeSelected({
@@ -542,8 +560,11 @@ export default function App() {
         mode: selectionModeRef.current,
         rangeStartFunctionId: rangeStartFidRef.current ?? undefined,
         rangeEndFunctionId: rangeEndFidRef.current ?? undefined,
+        viewMode: viewModeRef.current,
+        dateFormat: dateFormatRef.current,
         ...patch,
         type: 'config',
+        cardId: CURRENT_CARD_ID,
       };
       if (configDocIdRef.current) {
         await collBackend.update(configDocIdRef.current, current);
@@ -570,7 +591,12 @@ export default function App() {
           /* fall through to create */
         }
       }
-      const next: StateDoc = { ...existing, ...patch, type: 'state' };
+      const next: StateDoc = {
+        ...existing,
+        ...patch,
+        type: 'state',
+        cardId: CURRENT_CARD_ID,
+      };
       if (stateDocIdRef.current) {
         await collBackend.update(stateDocIdRef.current, next);
       } else {
@@ -616,10 +642,14 @@ export default function App() {
       rangeStartFidRef.current = null;
       rangeEndFidRef.current = null;
       variableNameRef.current = null;
+      viewModeRef.current = 'list';
+      dateFormatRef.current = 'YYYY-MMM-DD';
       setFunctionId(null);
       setRangeStartFid(null);
       setRangeEndFid(null);
       setVariableName('');
+      setViewMode('list');
+      setDateFormat('YYYY-MMM-DD');
       setInputFid('');
       setInputRangeStartFid('');
       setInputRangeEndFid('');
@@ -732,8 +762,8 @@ export default function App() {
   const statusText = useMemo(() => {
     if (!rangeSelected?.from) return 'Pick start date';
     if (!rangeSelected?.to) return 'Pick end date';
-    const from = formatDateLabel(rangeSelected.from);
-    const to = formatDateLabel(rangeSelected.to);
+    const from = formatDateLabel(rangeSelected.from, dateFormat);
+    const to = formatDateLabel(rangeSelected.to, dateFormat);
     const days =
       Math.round(
         (rangeSelected.to.getTime() - rangeSelected.from.getTime()) / 86400000
@@ -743,13 +773,13 @@ export default function App() {
 
   const toolbarLabel = useMemo(() => {
     if (selectionMode === 'single' && singleSelected) {
-      return formatDateLabel(singleSelected);
+      return formatDateLabel(singleSelected, dateFormat);
     }
     if (selectionMode === 'between' && rangeSelected?.from && rangeSelected?.to) {
-      return `${formatDateLabel(rangeSelected.from)} → ${formatDateLabel(rangeSelected.to)}`;
+      return `${formatDateLabel(rangeSelected.from, dateFormat)} → ${formatDateLabel(rangeSelected.to, dateFormat)}`;
     }
     return '';
-  }, [selectionMode, singleSelected, rangeSelected]);
+  }, [selectionMode, singleSelected, rangeSelected, dateFormat]);
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
 
@@ -812,23 +842,6 @@ export default function App() {
     );
   }, [rangeSelected]);
 
-  async function copySnippet() {
-    try {
-      await navigator.clipboard.writeText(DISCOVERY_SNIPPET);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      const el = document.querySelector('.settings-snippet');
-      if (el) {
-        const range = document.createRange();
-        range.selectNodeContents(el);
-        const sel = window.getSelection();
-        sel?.removeAllRanges();
-        sel?.addRange(range);
-      }
-    }
-  }
-
   // ── Render ────────────────────────────────────────────────────────────────────
 
   if (dataStatus === 'loading')
@@ -842,14 +855,16 @@ export default function App() {
     return <div className="state-msg error">Failed to load dates: {dataError}</div>;
 
   return (
-    <div className="app">
-      {/* ── Toolbar ── */}
+    <div className={`app mode-${role}`}>
+      {/* Screen-reader-only selected-date announcement (label visually hidden) */}
+      {toolbarLabel && (
+        <span className="sr-only" aria-live="polite">
+          Selected: {toolbarLabel}
+        </span>
+      )}
+      {/* ── Toolbar — admin/owner only. End users see content only. ── */}
+      {role === 'admin' && (
       <div className="toolbar">
-        {toolbarLabel && !showSettings && (
-          <span className="selected-display" title={toolbarLabel}>
-            {toolbarLabel}
-          </span>
-        )}
         <div className="toggle-group">
           {selectionMode === 'single' && (
             <button
@@ -882,9 +897,10 @@ export default function App() {
           </button>
         </div>
       </div>
+      )}
 
-      {/* ── Settings panel ── */}
-      {showSettings && (
+      {/* ── Settings panel — admin/owner only ── */}
+      {role === 'admin' && showSettings && (
         <div className="settings-panel">
           <label className="settings-label">Variable Configuration</label>
 
@@ -944,21 +960,9 @@ export default function App() {
             );
           })()}
 
-          <div className="settings-snippet-block">
-            <p className="settings-hint">
-              Discover variable IDs — run in browser console on the Domo page:
-            </p>
-            <div className="settings-snippet-row">
-              <code className="settings-snippet">{DISCOVERY_SNIPPET}</code>
-              <button className="settings-copy" onClick={copySnippet}>
-                {copied ? '✓' : 'Copy'}
-              </button>
-            </div>
-          </div>
-
           <div className="settings-group">
             <label className="settings-sublabel">
-              Variable name <span className="settings-fid">(preferred)</span>
+              Variable name
             </label>
             <input
               className="settings-input"
@@ -991,18 +995,80 @@ export default function App() {
             )}
           </div>
 
+          {/* v1.2: per-card default view + date format */}
           <div className="settings-group">
-            <label className="settings-sublabel">
-              Single date variable ID <span className="settings-fid">(legacy fallback)</span>
-            </label>
+            <label className="settings-sublabel">Default view</label>
+            <div className="settings-radio-row">
+              <label className="settings-radio">
+                <input
+                  type="radio"
+                  name="viewMode"
+                  value="list"
+                  checked={viewMode === 'list'}
+                  onChange={() => {
+                    viewModeRef.current = 'list';
+                    setViewMode('list');
+                    persistSettings({ viewMode: 'list' }, true);
+                  }}
+                />{' '}
+                List (dropdown)
+              </label>
+              <label className="settings-radio">
+                <input
+                  type="radio"
+                  name="viewMode"
+                  value="calendar"
+                  checked={viewMode === 'calendar'}
+                  onChange={() => {
+                    viewModeRef.current = 'calendar';
+                    setViewMode('calendar');
+                    persistSettings({ viewMode: 'calendar' }, true);
+                  }}
+                />{' '}
+                Calendar
+              </label>
+            </div>
+          </div>
+
+          <div className="settings-group">
+            <label className="settings-sublabel">Date format</label>
+            <select
+              className="settings-input"
+              value={dateFormat}
+              onChange={(e) => {
+                const v = e.target.value as DateFormat;
+                dateFormatRef.current = v;
+                setDateFormat(v);
+                persistSettings({ dateFormat: v }, true);
+              }}
+            >
+              <option value="YYYY-MMM-DD">YYYY – MMM – DD (2026 – Sep – 30)</option>
+              <option value="YYYY-MMM">YYYY – MMM (2026 – Sep)</option>
+              <option value="YYYY-MM-DD">YYYY-MM-DD (2026-09-30)</option>
+            </select>
+            <p className="settings-hint">
+              Preview: {formatDateLabel(new Date(), dateFormat)}
+            </p>
+          </div>
+
+          {/* Legacy numeric ID — hidden under disclosure as a fallback only */}
+          <details className="settings-group">
+            <summary className="settings-sublabel" style={{ cursor: 'pointer' }}>
+              Advanced — legacy numeric variable ID
+            </summary>
             <input
               className="settings-input"
               type="number"
-              placeholder="e.g. 131272"
+              placeholder="e.g. 131272 (only if no registry binding)"
               value={inputFid}
               onChange={(e) => setInputFid(e.target.value)}
+              style={{ marginTop: '4px' }}
             />
-          </div>
+            <p className="settings-hint">
+              Only used when the variables registry dataset is unbound or
+              missing the configured variable name. Prefer Variable name above.
+            </p>
+          </details>
 
           {!HIDE_BETWEEN && (
           <div className="settings-group">
@@ -1039,13 +1105,12 @@ export default function App() {
             </button>
           </div>
 
-          {(functionId ?? rangeStartFid ?? rangeEndFid) !== null && (
-            <p className="settings-saved">
-              Active: single={functionId ?? 'none'}, start={rangeStartFid ?? 'none'}, end=
-              {rangeEndFid ?? 'none'}
-              {autoDetected && <span className="settings-auto"> (auto-detected)</span>}
-            </p>
-          )}
+          <p className="settings-saved">
+            <strong>Admin</strong> · Card {CURRENT_CARD_ID.slice(0, 8)}
+            {variableName && <> · driving <code>{variableName}</code></>}
+            {!variableName && functionId !== null && <> · fid {functionId}</>}
+            {autoDetected && <span className="settings-auto"> (auto-detected)</span>}
+          </p>
         </div>
       )}
 
@@ -1083,7 +1148,7 @@ export default function App() {
                 <option value="">— select a date —</option>
                 {[...sortedDates].reverse().map((d) => (
                   <option key={d} value={d}>
-                    {formatDateLabel(isoToDate(d))}
+                    {formatDateLabel(isoToDate(d), dateFormat)}
                   </option>
                 ))}
               </select>
@@ -1169,9 +1234,32 @@ export default function App() {
         </>
       )}
 
-      {/* Single-mode warning only — between mode shows inline warn above Apply */}
-      {!showSettings && selectionMode === 'single' && !functionId && (
+      {/* Single-mode warning — admin/owner only */}
+      {role === 'admin' && !showSettings && selectionMode === 'single' && !functionId && !variableName && (
         <p className="warn">⚠ No Date variable bound to this brick</p>
+      )}
+
+      {/* IS_LOCAL dev-only role preview toggle */}
+      {IS_LOCAL && (
+        <button
+          className="dev-role-toggle"
+          onClick={() => setRole((r) => (r === 'admin' ? 'user' : 'admin'))}
+          title="Toggle role (dev-only)"
+          style={{
+            position: 'absolute',
+            bottom: 4,
+            right: 4,
+            fontSize: 10,
+            padding: '2px 6px',
+            border: '1px solid #ccc',
+            borderRadius: 4,
+            background: '#fff',
+            cursor: 'pointer',
+            opacity: 0.7,
+          }}
+        >
+          dev: {role}
+        </button>
       )}
     </div>
   );

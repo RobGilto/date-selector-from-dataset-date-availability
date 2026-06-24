@@ -1,6 +1,6 @@
 {
   "name": "Date Selector",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "fullpage": false,
   "size": {
     "width": 2,
@@ -22,7 +22,39 @@
     }
   ],
   "workflowMapping": [],
-  "packagesMapping": [],
+  "packagesMapping": [
+    {
+      "name": "Domo AppStudio Pages",
+      "alias": "isUserAppOwner",
+      "packageId": "",
+      "version": "1.0.0",
+      "functionName": "checkUserAppStudioRole",
+      "parameters": [
+        {
+          "name": "appId",
+          "displayName": "appId",
+          "type": "text",
+          "value": null,
+          "nullable": false,
+          "isList": false,
+          "children": [],
+          "entitySubType": null,
+          "alias": "appId"
+        }
+      ],
+      "output": {
+        "name": "result",
+        "displayName": "result",
+        "type": "boolean",
+        "value": null,
+        "nullable": true,
+        "isList": false,
+        "children": [],
+        "entitySubType": null,
+        "alias": "result"
+      }
+    }
+  ],
   "id": "4896fd53-0232-42d3-b31b-7be12b50e6ed",
   "fileName": "manifest.json",
   "collectionsMapping": [
@@ -30,59 +62,23 @@
       "name": "date-selector-settings",
       "schema": {
         "columns": [
-          {
-            "name": "type",
-            "type": "STRING"
-          },
-          {
-            "name": "variableName",
-            "type": "STRING"
-          },
-          {
-            "name": "functionId",
-            "type": "LONG"
-          },
-          {
-            "name": "mode",
-            "type": "STRING"
-          },
-          {
-            "name": "rangeStartFunctionId",
-            "type": "LONG"
-          },
-          {
-            "name": "rangeEndFunctionId",
-            "type": "LONG"
-          },
-          {
-            "name": "rangeStart",
-            "type": "STRING"
-          },
-          {
-            "name": "rangeEnd",
-            "type": "STRING"
-          },
-          {
-            "name": "singleDate",
-            "type": "STRING"
-          }
+          { "name": "type", "type": "STRING" },
+          { "name": "cardId", "type": "STRING" },
+          { "name": "variableName", "type": "STRING" },
+          { "name": "functionId", "type": "LONG" },
+          { "name": "mode", "type": "STRING" },
+          { "name": "viewMode", "type": "STRING" },
+          { "name": "dateFormat", "type": "STRING" },
+          { "name": "rangeStartFunctionId", "type": "LONG" },
+          { "name": "rangeEndFunctionId", "type": "LONG" },
+          { "name": "rangeStart", "type": "STRING" },
+          { "name": "rangeEnd", "type": "STRING" },
+          { "name": "singleDate", "type": "STRING" }
         ]
       },
       "permissions": [
-        {
-          "role": "ADMIN",
-          "actions": [
-            "READ",
-            "WRITE",
-            "DELETE"
-          ]
-        },
-        {
-          "role": "USER",
-          "actions": [
-            "READ"
-          ]
-        }
+        { "role": "ADMIN", "actions": ["READ", "WRITE", "DELETE"] },
+        { "role": "USER", "actions": ["READ"] }
       ]
     }
   ]

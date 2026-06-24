@@ -59,10 +59,11 @@ design is installed.
 > in this repo uses an `IS_LOCAL` localStorage shim, so a `proxyId` is
 > only required if you want to test against real AppDB locally.
 
-> **Note:** all instances of the brick on the same Domo tenant share
-> the same collection — a single configured variable for the design,
-> applied wherever the brick is dropped. Configure once, reuse across
-> pages.
+> **Note (v1.2+):** every card-instance writes its own config + state docs
+> keyed by `domo.env.cardId`. Two cards on the same page hold independent
+> settings — different variables, different date formats, different default
+> views. Legacy unkeyed docs from pre-v1.2 deployments are still readable
+> as a safety net during the upgrade.
 
 ## How variable wiring works
 

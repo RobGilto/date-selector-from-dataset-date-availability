@@ -22,7 +22,7 @@ Domo's native date filter and drives any App Studio variable on the page.
 
 - App design **Date Selector** already exists in your tenant (id
   `4896fd53-0232-42d3-b31b-7be12b50e6ed`). If not, upload
-  `date-selector-1.0.4.zip` via Asset Library → Apps → ⋮ → Upload Design.
+  `date-selector-1.2.0.zip` via Asset Library → Apps → ⋮ → Upload Design.
 - Dataset with a `Date` column (literal name, case-sensitive).
 - At least one App Studio Date-typed variable on the page that some cards
   use as a filter (e.g. `vTillSelectedMonth`).
@@ -48,7 +48,13 @@ Domo's native date filter and drives any App Studio variable on the page.
 
 ## 2. Configure which variable to drive (admin, one-time)
 
-1. Click the brick's **gear ⚙** (top-right of the card).
+> **Who sees the gear?** Only users with a Domo system role of `Admin` or
+> `Privileged`, OR the owner of the App Studio app, can see the gear icon
+> in v1.2+. End users see only the dropdown/calendar. If the Code Engine
+> package `Domo AppStudio Pages` is not provisioned on your instance, the
+> gear stays visible to everyone (fail-open so config is never locked).
+
+1. Click the brick's **gear ⚙** (top-right of the card). Admin-only.
 2. Settings panel opens. The first section is **Variable Configuration**.
 
 ![Settings panel — gear opens this view](img/02-settings-panel.png)
@@ -67,10 +73,11 @@ Domo's native date filter and drives any App Studio variable on the page.
 6. Verify the green confirmation line at the bottom of the panel:
    `Active: single=131272, start=none, end=none`
 
-> **Persistence:** the chosen variable is stored per-card in AppDB.
-> Refreshing the page, signing out, or switching between devices keeps the
-> same configuration. End users never see the gear panel unless an admin
-> opens it.
+> **Persistence:** in v1.2+, every card-instance keeps its own
+> configuration (variable name, view mode, date format) keyed by the
+> Domo card id. Two cards on the same page can drive different variables
+> or display different date formats without overwriting each other.
+> Refresh the page, sign out, switch devices — config follows the card.
 
 ---
 

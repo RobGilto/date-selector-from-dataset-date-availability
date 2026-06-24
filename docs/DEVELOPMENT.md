@@ -123,7 +123,7 @@ understand the brick. Key sections (search for the `// ──` dividers):
 | `resolveVarIds()` | Registry lookup; routes between localStorage and `domo.get` |
 | `fetchLocalDates()` | Parse `sample-data.csv` for local mode date set |
 | `registerVariablesListener()` | Subscribe to `domo.onVariablesUpdated`; ingest live variable name/fid/value tuples |
-| `discoverViaPageControls()` | Fallback discovery via REST endpoint (may 404 on some pages) |
+| `resolveRole()` (in `lib/role.ts`) | Returns `'admin' \| 'user'` based on Domo system role + Code Engine app-owner check |
 | `App` | React component — orchestrates everything |
 
 #### Key handlers inside `App`
@@ -164,7 +164,7 @@ settings layout, list-view dropdown styling, mode toggle (hidden when
 The single most important config file. Declares:
 
 - `id` — design GUID (do NOT change after first publish)
-- `version` — increment per release (e.g. `1.0.4`)
+- `version` — increment per release (e.g. `1.2.0`)
 - `size` — default `2x1` card units
 - `datasetsMapping`:
   - `sampleData` — the dataset whose `Date` column is surfaced. Customer
@@ -285,41 +285,54 @@ New Version** → drop zip.
 
 Collection name: `date-selector-settings` (declared in manifest).
 
-Two document types, discriminated by `type` field:
+Two document types, discriminated by `type` field. **v1.2** scopes every
+doc to a specific card-instance via `cardId` — `domo.env.cardId` is read
+once at module load and stamped on every write. Legacy unkeyed docs are
+read-only at load time and survive an upgrade without rewrite.
 
 ```ts
-// Config doc — admin-set wiring
+// Config doc — admin-set wiring (per card)
 {
   type: 'config',
-  variableName?: string,        // preferred (v1.2+)
-  functionId?: number,          // legacy fallback
+  cardId?: string,              // v1.2+; absent on pre-v1.2 docs
+  variableName?: string,        // preferred — resolved via variablesDataSet
+  functionId?: number,          // legacy fallback only
   mode?: 'single' | 'between',
+  viewMode?: 'calendar' | 'list',   // v1.2+
+  dateFormat?: 'YYYY-MMM' | 'YYYY-MMM-DD' | 'YYYY-MM-DD',  // v1.2+
   rangeStartFunctionId?: number,
   rangeEndFunctionId?: number
 }
 
-// State doc — last picked date(s)
+// State doc — last picked date(s), per card
 {
   type: 'state',
-  singleDate?: string,           // YYYY-MM-DD
+  cardId?: string,              // v1.2+
+  singleDate?: string,          // YYYY-MM-DD
   rangeStart?: string,
   rangeEnd?: string
 }
 ```
 
 `loadSettings()` queries the collection on mount, partitions docs by
-`type`, hydrates refs + UI state, re-fires variables so cards restore
-filter without user re-clicking.
+`type`, then prefers `cardId === domo.env.cardId` over the legacy
+unkeyed doc. Hydrates refs + UI state, re-fires variables so cards
+restore filter without user re-clicking.
+
+`effectiveFid()` resolution order in v1.2: (1) `variableName` resolved
+via `variablesDataSet` registry → fid, (2) legacy `functionId` from
+config, (3) `null` (no push). The pre-v1.2 page-controls REST fallback
+has been removed.
 
 Reset deletes both docs and clears refs.
 
 ---
 
-## 8. Variable inclusivity (NOTE — v1.0.4 behaviour)
+## 8. Variable inclusivity (NOTE — v1.2.0 behaviour)
 
 Historic versions shifted the pushed date by ±1 day to compensate for
 exclusive downstream filters (`Date < vTillSelectedMonth`). **Removed in
-v1.0.4** — brick now pushes the raw picked ISO date verbatim. Downstream
+v1.2.0** — brick now pushes the raw picked ISO date verbatim. Downstream
 beast modes must use inclusive comparisons (`<=`, `>=`, `BETWEEN`).
 
 If you need to bring back the shift, the helper was:
