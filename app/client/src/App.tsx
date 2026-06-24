@@ -1137,8 +1137,10 @@ export default function App() {
             </div>
           )}
 
-          {/* List / dropdown — single mode only */}
-          {selectionMode === 'single' && viewMode === 'list' && (
+          {/* List / dropdown — single mode only.
+              End users ALWAYS see the dropdown regardless of saved viewMode.
+              Admins follow the saved view setting. */}
+          {selectionMode === 'single' && (role === 'user' || viewMode === 'list') && (
             <div className="text-mode">
               <select
                 className="date-select"
@@ -1157,8 +1159,8 @@ export default function App() {
             </div>
           )}
 
-          {/* Calendar */}
-          {viewMode === 'calendar' && (
+          {/* Calendar — admin only (end users see only the dropdown above) */}
+          {role === 'admin' && viewMode === 'calendar' && (
             <div className="cal-wrapper">
               {selectionMode === 'single' ? (
                 <DayPicker
