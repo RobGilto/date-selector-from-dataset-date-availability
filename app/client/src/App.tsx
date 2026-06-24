@@ -298,16 +298,6 @@ function registerVariablesListener() {
 }
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
-const CalIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-    <path d="M3.5 0a.5.5 0 0 1 .5.5V1h8V.5a.5.5 0 0 1 1 0V1h1a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H2a2 2 0 0 1-2-2V3a2 2 0 0 1 2-2h1V.5a.5.5 0 0 1 .5-.5zM1 4v10a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V4H1z" />
-  </svg>
-);
-const ListIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
-    <path d="M2.5 12a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5zm0-4a.5.5 0 0 1 .5-.5h10a.5.5 0 0 1 0 1H3a.5.5 0 0 1-.5-.5z" />
-  </svg>
-);
 const GearIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
     <path d="M8 4.754a3.246 3.246 0 1 0 0 6.492 3.246 3.246 0 0 0 0-6.492zM5.754 8a2.246 2.246 0 1 1 4.492 0 2.246 2.246 0 0 1-4.492 0z" />
@@ -329,7 +319,9 @@ export default function App() {
   const [rangeSelected, setRangeSelected] = useState<DateRange | undefined>();
 
   // View
-  const [viewMode, setViewMode] = useState<ViewMode>('calendar');
+  // Default to 'list' (dropdown) for everyone. Admin can opt into 'calendar'
+  // via the gear panel's Default view radio.
+  const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [showSettings, setShowSettings] = useState(false);
 
   // Settings (refs for callbacks)
@@ -351,7 +343,7 @@ export default function App() {
   // v1.2: per-card view + format preferences.
   const [dateFormat, setDateFormat] = useState<DateFormat>('YYYY-MMM-DD');
   const dateFormatRef = useRef<DateFormat>('YYYY-MMM-DD');
-  const viewModeRef = useRef<ViewMode>('calendar');
+  const viewModeRef = useRef<ViewMode>('list');
 
   // v1.2: role-gated rendering. Admin sees toolbar + gear, user sees content only.
   const [role, setRole] = useState<Role>(IS_LOCAL ? 'admin' : 'user');
@@ -864,32 +856,13 @@ export default function App() {
           Selected: {toolbarLabel}
         </span>
       )}
-      {/* ── Toolbar — admin/owner only. End users see content only. ── */}
+      {/* ── Toolbar — admin/owner only. End users see content only.
+           Calendar/List toggle buttons removed from the toolbar; admins
+           switch view via the gear panel's "Default view" radio so the
+           default surface is always the dropdown for everyone. ── */}
       {role === 'admin' && (
       <div className="toolbar">
         <div className="toggle-group">
-          {selectionMode === 'single' && (
-            <button
-              className={`toggle-btn ${viewMode === 'list' && !showSettings ? 'active' : ''}`}
-              onClick={() => {
-                setShowSettings(false);
-                setViewMode('list');
-              }}
-              title="List view"
-            >
-              <ListIcon />
-            </button>
-          )}
-          <button
-            className={`toggle-btn ${viewMode === 'calendar' && !showSettings ? 'active' : ''}`}
-            onClick={() => {
-              setShowSettings(false);
-              setViewMode('calendar');
-            }}
-            title="Calendar view"
-          >
-            <CalIcon />
-          </button>
           <button
             className={`toggle-btn ${showSettings ? 'active' : ''}`}
             onClick={() => setShowSettings((s) => !s)}
