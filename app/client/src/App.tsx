@@ -519,11 +519,13 @@ export default function App() {
 
   // Resolve which functionId the brick should push. Registry-by-name takes
   // priority; falls back to the legacy raw functionId stored in config.
+  // Reads the module-level cache (varRegistryCache) directly so callbacks
+  // that fire before the React `registry` state has populated still resolve.
   // Returns null if neither is configured / resolvable.
   function effectiveFid(): number | null {
     const name = variableNameRef.current;
     if (name) {
-      const fid = registry.get(name);
+      const fid = varRegistryCache?.get(name) ?? registry.get(name);
       if (typeof fid === 'number') return fid;
       console.warn(`[effectiveFid] '${name}' not in registry — falling back to functionId`);
     }
