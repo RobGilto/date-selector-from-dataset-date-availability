@@ -1,7 +1,25 @@
 # Developer Documentation — Date Selector
 
-For engineers who will extend, debug, or hand off this Domo custom app
+For engineers who will extend, debug, or hand off this Domo custom app.
 
+> **v1.3 pivot (2026-07-01):** the variable-drive contract was ripped out.
+> The brick now emits page filters via `domo.filterContainer(...)`.
+> Sections below authored pre-v1.3 that reference `variableName`,
+> `functionId`, `resolveVarIds`, `effectiveFid`, `registerVariablesListener`,
+> or `variablesDataSet` describe removed code — retained as historical
+> context. The live contract:
+>
+> - **Config schema:** `filterColumn`, `filterOperator`, `filterDataType`
+>   (plus `mode`, `viewMode`, `dateFormat`, `cardId`, `type`)
+> - **Column discovery:** `fetchDatasetColumns()` (SQL `LIMIT 1` or local
+>   CSV header); cached in `localStorage` under
+>   `date-selector:columns:<alias>:v1` (30-min TTL)
+> - **Emission:** `emitFilter([{column, operator, values, dataType}])`
+>   wraps `domo.filterContainer` with an `isFiltersEmittedFromApp` echo
+>   guard
+> - **Listener:** `domo.onFiltersUpdate` hydrates the dropdown from
+>   external filter changes; ignores self-echos
+> - **Rehydrate:** `rehydrateFilter(state)` re-emits on load
 
 ---
 
@@ -12,9 +30,10 @@ A Domo App Studio custom card that:
 - Reads dates from a bound dataset
 - Renders a calendar (or sorted dropdown) — only dates present in the
   dataset are clickable
-- On pick, fires `domo.requestVariablesUpdate` against a configured App
-  Studio variable → cards on the same page filter accordingly
-- Persists the variable configuration in a per-card AppDB collection
+- On pick, emits a page filter via `domo.filterContainer(...)` on the
+  configured column → cards on the same page filtered by that column
+  refresh
+- Persists the filter configuration in a per-card AppDB collection
 
 Single brick, single React component, no backend.
 
@@ -291,17 +310,18 @@ once at module load and stamped on every write. Legacy unkeyed docs are
 read-only at load time and survive an upgrade without rewrite.
 
 ```ts
-// Config doc — admin-set wiring (per card)
+// Config doc — admin-set wiring (per card) — v1.3 shape
 {
   type: 'config',
-  cardId?: string,              // v1.2+; absent on pre-v1.2 docs
-  variableName?: string,        // preferred — resolved via variablesDataSet
-  functionId?: number,          // legacy fallback only
+  cardId?: string,
   mode?: 'single' | 'between',
-  viewMode?: 'calendar' | 'list',   // v1.2+
-  dateFormat?: 'YYYY-MMM' | 'YYYY-MMM-DD' | 'YYYY-MM-DD',  // v1.2+
-  rangeStartFunctionId?: number,
-  rangeEndFunctionId?: number
+  viewMode?: 'calendar' | 'list',
+  dateFormat?: 'YYYY-MMM' | 'YYYY-MMM-DD' | 'YYYY-MM-DD',
+  filterColumn?: string,                                   // v1.3+
+  filterOperator?: 'EQUALS' | 'BETWEEN'
+    | 'LESS_THAN_EQUALS_TO' | 'GREAT_THAN_EQUALS_TO',      // v1.3+
+  filterDataType?: 'DATE' | 'STRING' | 'NUMERIC',          // v1.3+
+  functionId?: number  // @deprecated v1.3 — legacy-detect only
 }
 
 // State doc — last picked date(s), per card
@@ -316,13 +336,13 @@ read-only at load time and survive an upgrade without rewrite.
 
 `loadSettings()` queries the collection on mount, partitions docs by
 `type`, then prefers `cardId === domo.env.cardId` over the legacy
-unkeyed doc. Hydrates refs + UI state, re-fires variables so cards
-restore filter without user re-clicking.
+unkeyed doc. Hydrates refs + UI state and calls `rehydrateFilter(state)`
+so cards restore filter without user re-clicking.
 
-`effectiveFid()` resolution order in v1.2: (1) `variableName` resolved
-via `variablesDataSet` registry → fid, (2) legacy `functionId` from
-config, (3) `null` (no push). The pre-v1.2 page-controls REST fallback
-has been removed.
+v1.3 emission path: `handleSingleSelect` → `emitFilter(buildFilterPayload([iso]))`
+→ `domo.filterContainer([{column, operator, values, dataType}])`. The
+`isFiltersEmittedFromApp` boolean short-circuits the self-echo caught by
+the `domo.onFiltersUpdate` listener.
 
 Reset deletes both docs and clears refs.
 

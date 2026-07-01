@@ -1,7 +1,9 @@
 # Date Selector — Setup Guide
 
-Drop-in date control that replaces
-Domo's native date filter and drives any App Studio variable on the page.
+Drop-in date control that replaces Domo's native date filter and emits a
+**page filter** (`domo.filterContainer`) on the picked column. Cards on
+the same page filtered by that column refresh automatically. No App
+Studio variable wiring required (v1.3 dropped the variable path).
 
 ---
 
@@ -9,8 +11,9 @@ Domo's native date filter and drives any App Studio variable on the page.
 
 - Renders a calendar (or dropdown list) showing **only the dates present in
   the bound dataset** — empty days greyed out.
-- When a user picks a date, the brick fires `requestVariablesUpdate` on the
-  configured variable. Any card filtered by that variable refreshes.
+- When a user picks a date, the brick emits `domo.filterContainer(...)`
+  with a page filter on the configured column. Any card on the page that
+  filters by that column refreshes.
 - Configuration is **per-card** and **persists** in an AppDB collection.
   Admin sets it once; end users see only the calendar.
 
@@ -22,10 +25,11 @@ Domo's native date filter and drives any App Studio variable on the page.
 
 - App design **Date Selector** already exists in your tenant (id
   `4896fd53-0232-42d3-b31b-7be12b50e6ed`). If not, upload
-  `date-selector-1.2.0.zip` via Asset Library → Apps → ⋮ → Upload Design.
-- Dataset with a `Date` column (literal name, case-sensitive).
-- At least one App Studio Date-typed variable on the page that some cards
-  use as a filter (e.g. `vTillSelectedMonth`).
+  `date-selector-1.3.0.zip` via Asset Library → Apps → ⋮ → Upload Design.
+- Dataset bound with a date-typed column (literal column name; admin
+  picks it in the gear panel).
+- At least one downstream card on the page that filters by that same
+  column (dataset-level filter, not a variable).
 
 ---
 
@@ -46,7 +50,7 @@ Domo's native date filter and drives any App Studio variable on the page.
 
 ---
 
-## 2. Configure which variable to drive (admin, one-time)
+## 2. Pick the filter column (admin, one-time)
 
 > **Who sees the gear?** Only users with a Domo system role of `Admin` or
 > `Privileged`, OR the owner of the App Studio app, can see the gear icon
@@ -55,23 +59,22 @@ Domo's native date filter and drives any App Studio variable on the page.
 > gear stays visible to everyone (fail-open so config is never locked).
 
 1. Click the brick's **gear ⚙** (top-right of the card). Admin-only.
-2. Settings panel opens. The first section is **Variable Configuration**.
+2. Settings panel opens. The first section is **Filter Configuration**.
 
 ![Settings panel — gear opens this view](img/02-settings-panel.png)
 
-3. The dropdown labelled "Detected on this page" lists every App Studio
-   variable that's pushed a value to this brick on load. Two groups:
-   - **Date-typed** — variables whose live value looks like an ISO date
-     OR whose name contains `date|month|day|year|period|till|start|end`.
-     These are what this brick is designed to drive.
-   - **Other detected** — non-date variables, surfaced for fallback in
-     case the heuristic misses something.
-4. Pick the variable that drives your filtered cards. Commonly this is
-   typically **`vTillSelectedMonth`** (functionId `131272`).
-5. Selection auto-saves to the brick's AppDB collection
+3. **Filter column** — dropdown listing every column of the bound
+   dataset (discovered via `SELECT * ... LIMIT 1` and cached 30 min).
+   Pick the date column your downstream cards filter by.
+4. **Filter operator** — default `EQUALS` for a single-day filter.
+   Other options: `BETWEEN` (range), `LESS_THAN_EQUALS_TO`
+   (cumulative-through), `GREAT_THAN_EQUALS_TO` (from-date).
+5. **Data type** — default `DATE`. Change to `STRING` or `NUMERIC` only
+   if the column is not date-typed.
+6. Selection auto-saves to the brick's AppDB collection
    (`date-selector-settings`). Panel can be closed.
-6. Verify the green confirmation line at the bottom of the panel:
-   `Active: single=131272, start=none, end=none`
+7. Verify the status line at the bottom:
+   `Admin · Card <id> · filter=<column> <op>`
 
 > **Persistence:** in v1.2+, every card-instance keeps its own
 > configuration (variable name, view mode, date format) keyed by the
@@ -94,15 +97,15 @@ Domo's native date filter and drives any App Studio variable on the page.
 
   ![List view — descending dropdown](img/04-list-view.png)
 
-- Picking a date pushes the raw ISO date to the configured variable.
-  Filtered cards re-render.
+- Picking a date emits a `filterContainer` page filter on the configured
+  column with the ISO date value. Filtered cards re-render.
 
 ---
 
 ## 4. Re-configure or clear
 
-- **Change the variable:** gear ⚙ → pick a different entry from the
-  dropdown → auto-saves.
+- **Change the filter column / operator:** gear ⚙ → pick a different
+  value → auto-saves.
 - **Wipe configuration:** gear ⚙ → **Reset**. Both the config doc and
   any persisted picked date are deleted from AppDB.
 
@@ -111,13 +114,10 @@ Domo's native date filter and drives any App Studio variable on the page.
 ## 5. Sandbox / security notes
 
 - The brick lives inside Domo's standard custom-app iframe sandbox.
-- Variable detection uses Domo's documented `domo.onVariablesUpdated`
-  event — no DOM scraping, no private REST endpoints.
-- The settings panel offers a manual "Discover variable IDs" snippet (a
-  one-liner you paste into the browser console). It only hits the Domo
-  page's `variable/controls/list` endpoint and prints names + IDs to your
-  console. No data leaves your tenant. Review the code in `App.tsx` if
-  your security team requires it.
+- Filter emission uses Domo's documented `domo.filterContainer` API —
+  no DOM scraping, no private REST endpoints.
+- Column discovery reads a single row of the bound dataset via the
+  documented `POST /sql/v1/<alias>` SQL endpoint.
 
 ---
 
@@ -126,23 +126,23 @@ Domo's native date filter and drives any App Studio variable on the page.
 | Symptom | Likely cause | Fix |
 |---|---|---|
 | Every day greyed out | `Date` column missing or differently named | Confirm bound dataset has a literal `Date` column. Re-bind. |
-| Picking a date doesn't filter | No variable selected in gear panel | Open gear → pick from dropdown → reload card. |
-| Wrong variable selected | Date-typed heuristic misclassified or someone hit the wrong row | Reopen gear → pick again. Auto-saves. |
-| Cards exclude the picked date | Downstream beast mode uses `<` not `<=` | Update the beast mode to `<=`. Brick now pushes raw dates (no compensation). |
-| Dropdown is empty | Page has no Date-typed variables, or they haven't fired to the iframe yet | Add a Date variable to the page in App Studio. Save the page; refresh. |
+| Picking a date doesn't filter | No filter column selected in gear panel | Open gear → pick a column → auto-saves. |
+| Cards don't respond | Downstream card filters by a different column | Match the column names, or pick that column in the gear. |
+| Column dropdown empty | Dataset schema fetch failed | Confirm alias `sampleData` bound. Fallback text input lets you type the column name. |
 | Dropdown sort order wrong | You're on a pre-1.0.3 version | Upload the latest zip via Asset Library. |
 | Want to wipe config | Bad setup, starting over | Gear → Reset. |
 
 ---
 
-## What's NOT in this release (v1.0.4)
+## What's NOT in this release (v1.3.0)
 
-- **Between (date range) mode** — built but hidden pending stakeholder
-  use-case confirmation. Re-enable with a one-line code flag.
-- **Driving multiple variables in one pick** — single variable per card
-  only. Add a second card or wait for v1.1 if multi-target needed.
-- **Variable name registry** — `variablesDataSet` alias is wired but
-  optional. Use for ID-churn resilience or cross-app reuse only.
+- **Between (date range) mode** — code paths preserved; UI hidden pending
+  stakeholder use-case confirmation. Flip `HIDE_BETWEEN` to re-enable.
+- **Multi-column filter emission** — one column per card. Add a second
+  card if you need multiple columns filtered.
+- **Variable emission** — dropped entirely in v1.3. Beast modes that
+  referenced App Studio variables must be rebuilt to filter by the raw
+  dataset column instead.
 
 ---
 

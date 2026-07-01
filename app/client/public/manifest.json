@@ -1,6 +1,6 @@
 {
   "name": "Date Selector",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "fullpage": false,
   "size": {
     "width": 2,
@@ -11,14 +11,6 @@
       "alias": "sampleData",
       "dataSetId": "517ca1d7-3130-452b-926a-e4a6612212ee",
       "fields": []
-    },
-    {
-      "alias": "variablesDataSet",
-      "dataSetId": "",
-      "fields": [
-        { "alias": "Variable", "columnName": "Variable" },
-        { "alias": "VariableID", "columnName": "VariableID" }
-      ]
     }
   ],
   "workflowMapping": [],
@@ -64,13 +56,12 @@
         "columns": [
           { "name": "type", "type": "STRING" },
           { "name": "cardId", "type": "STRING" },
-          { "name": "variableName", "type": "STRING" },
-          { "name": "functionId", "type": "LONG" },
           { "name": "mode", "type": "STRING" },
           { "name": "viewMode", "type": "STRING" },
           { "name": "dateFormat", "type": "STRING" },
-          { "name": "rangeStartFunctionId", "type": "LONG" },
-          { "name": "rangeEndFunctionId", "type": "LONG" },
+          { "name": "filterColumn", "type": "STRING" },
+          { "name": "filterOperator", "type": "STRING" },
+          { "name": "filterDataType", "type": "STRING" },
           { "name": "rangeStart", "type": "STRING" },
           { "name": "rangeEnd", "type": "STRING" },
           { "name": "singleDate", "type": "STRING" }

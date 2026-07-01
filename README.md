@@ -1,8 +1,14 @@
 # Date Selector — Domo Custom App
 
 A Domo App Studio custom card that surfaces **only the dates present in
-the bound dataset** and drives an App Studio variable on selection. Cards
-filtered by that variable refresh whenever the user picks a date.
+the bound dataset** and emits a **page filter** on selection via
+`domo.filterContainer`. Cards on the same page that filter by the picked
+column refresh automatically. No variable wiring required.
+
+> **Beast-mode implication:** page filters narrow the rows the beast mode
+> sees. Cumulative logic (MTD, YTD, running totals) MUST be written to
+> accept a filtered date set — a beast mode referencing a page variable
+> is NOT driven by this brick (v1.3 drops the variable path entirely).
 
 - **Calendar view** — months side-by-side; non-data days greyed out
 - **List view** — descending dropdown of available dates
@@ -43,10 +49,10 @@ What happens on install:
 
 Two documents live in the collection per configured card:
 
-- **`type:"config"`** — admin-set variable wiring (`functionId` or
-  `variableName`)
-- **`type:"state"`** — last picked date(s); used to restore selection on
-  reload
+- **`type:"config"`** — admin-set filter wiring (`filterColumn`,
+  `filterOperator`, `filterDataType`) + view/format preferences
+- **`type:"state"`** — last picked date(s); used to restore selection and
+  re-emit filter on reload
 
 Reset (gear → Reset) deletes both docs. Schema changes in `manifest.json`
 on a subsequent publish trigger a schema migration the next time the
@@ -65,21 +71,25 @@ design is installed.
 > views. Legacy unkeyed docs from pre-v1.2 deployments are still readable
 > as a safety net during the upgrade.
 
-## How variable wiring works
+## How page filters flow (v1.3)
 
-1. **Auto-detect (primary)** — the brick subscribes to
-   `domo.onVariablesUpdated` at mount and ingests every variable
-   (`functionId` + `name` + live value) that App Studio pushes to the
-   card. The gear panel renders these in a dropdown grouped by
-   "Date-typed" vs "Other detected". Admin clicks one row → saved.
-2. **Manual variable ID (fallback)** — if the variable doesn't appear in
-   auto-detect, paste its `functionId` into the "Single date variable ID"
-   field.
-3. **Dev-console snippet (last resort)** — when neither path works (rare,
-   usually on legacy pages where the variable hasn't fired), the gear
-   panel includes a one-liner you copy into the browser console on the
-   host App Studio page; it prints a table of every variable's name +
-   `functionId`. Paste the right ID into the fallback field above.
+1. **Column discovery** — on mount the brick reads the bound dataset
+   schema via `SELECT * FROM sampleData LIMIT 1` (locally: reads the CSV
+   header). Result cached in `localStorage` for 30 minutes.
+2. **Admin picks column + operator** — gear panel `Filter column` select
+   lists discovered columns; `Filter operator` picks `EQUALS` / `BETWEEN`
+   / `LESS_THAN_EQUALS_TO` / `GREAT_THAN_EQUALS_TO`; `Data type` defaults
+   to `DATE`.
+3. **Date pick → emit** — brick builds
+   `[{column, operator, values, dataType}]` and calls
+   `domo.filterContainer(payload)`. Downstream cards on the same page
+   filtered by that column refresh automatically.
+4. **Echo guard** — an `isFiltersEmittedFromApp` boolean short-circuits
+   the brick's own `onFiltersUpdate` listener so the emit does not loop.
+5. **External round-trip** — when another card / filter sets the same
+   column, the listener hydrates the brick's dropdown to match.
+6. **Rehydrate on reload** — `loadSettings` re-emits the last picked
+   date's payload so downstream cards restore without a manual re-click.
 
 ## Quick start (local dev)
 

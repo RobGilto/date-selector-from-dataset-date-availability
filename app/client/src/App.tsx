@@ -9,23 +9,15 @@ import { resolveRole, type Role } from './lib/role';
 // ── Constants ─────────────────────────────────────────────────────────────────
 const DATASET_ALIAS = 'sampleData';
 const DATE_COLUMN = 'Date';
-// Optional second dataset alias: a customer-maintained "variables registry" —
-// two columns (Variable, VariableID) mapping human-readable variable names
-// to App Studio function IDs. Mirrors the Nine "Top Program" pattern. Lets
-// the brick drive variables by NAME instead of magic numeric IDs.
-const VARIABLES_DATASET_ALIAS = 'variablesDataSet';
 const EN_DASH = '–';
-const DEFAULT_SINGLE_FID = 131272;
-// Between mode is not currently exposed pending product decision.
-// Hide the toggle UI but keep the code paths so we can re-enable without a
-// rebuild once they come back with a use case.
 const HIDE_BETWEEN = true;
 const IS_LOCAL =
   window.location.hostname === 'localhost' ||
   window.location.hostname === '127.0.0.1';
 
-// Per-card identity — v1.2 scopes every AppDB doc to a specific card-instance
-// so two bricks on the same page hold independent settings.
+const COLUMNS_CACHE_KEY = `date-selector:columns:${DATASET_ALIAS}:v1`;
+const COLUMNS_TTL_MS = 30 * 60 * 1000;
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const CURRENT_CARD_ID: string =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -35,23 +27,28 @@ const CURRENT_CARD_ID: string =
 type SelectionMode = 'single' | 'between';
 type ViewMode = 'calendar' | 'list';
 type DateFormat = 'YYYY-MMM' | 'YYYY-MMM-DD' | 'YYYY-MM-DD';
+type FilterOperator =
+  | 'EQUALS'
+  | 'BETWEEN'
+  | 'LESS_THAN_EQUALS_TO'
+  | 'GREAT_THAN_EQUALS_TO';
+type FilterDataType = 'DATE' | 'STRING' | 'NUMERIC';
 
 interface ConfigDoc {
   type?: 'config';
-  // v1.2: card-instance discriminator. Older docs without this field are
-  // treated as a design-wide default at load time.
   cardId?: string;
-  // Preferred (v1.2+): variable identified by NAME, resolved via registry dataset.
-  variableName?: string;
-  // Legacy: variable identified by raw functionId. Used as fallback when no
-  // variableName configured or registry lookup misses.
-  functionId?: number;
   mode?: SelectionMode;
-  rangeStartFunctionId?: number;
-  rangeEndFunctionId?: number;
-  // v1.2: per-card view + format preferences.
   viewMode?: ViewMode;
   dateFormat?: DateFormat;
+  filterColumn?: string;
+  filterOperator?: FilterOperator;
+  filterDataType?: FilterDataType;
+  /** @deprecated v1.3 — variable-era field, ignored on read */
+  functionId?: number;
+  /** @deprecated v1.3 */
+  rangeStartFunctionId?: number;
+  /** @deprecated v1.3 */
+  rangeEndFunctionId?: number;
 }
 
 interface StateDoc {
@@ -63,12 +60,6 @@ interface StateDoc {
 }
 
 type CollectionDoc = ConfigDoc | StateDoc;
-
-interface DetectedVar {
-  functionId: number;
-  name?: string;
-  value?: unknown;
-}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function toISO(d: Date): string {
@@ -95,8 +86,6 @@ function formatDateLabel(d: Date, fmt: DateFormat = 'YYYY-MMM-DD'): string {
 }
 
 // ── Collection backend ──────────────────────────────────────────────────────
-// Real Domo in production; localStorage shim when IS_LOCAL so persistence flows
-// (persistState, persistSettings, loadSettings, reset) can be exercised in dev.
 const LOCAL_COLL_KEY = `domo-appdb-mock:date-selector-settings`;
 
 function readLocalDocs(): { id: string; content: CollectionDoc }[] {
@@ -173,69 +162,54 @@ const collBackend = {
   },
 };
 
-// ── Variable name → functionId registry ─────────────────────────────────────
-// Resolves a customer-friendly variable name (e.g. "vTillSelectedMonth") to
-// its App Studio function ID via the bound `variablesDataSet`. The customer
-// maintains the dataset (CSV upload or Magic ETL output) with two columns:
-// Variable, VariableID. Lookup is module-scoped + cached for the session.
-//
-// Mirrors the Nine "Top Program" pattern. Survives App Studio variable
-// rebuilds (function IDs churn; names stay stable) and removes the need for
-// the user to know magic numeric IDs.
-let varRegistryCache: Map<string, number> | null = null;
-let varRegistryPromise: Promise<Map<string, number>> | null = null;
-
-async function fetchLocalRegistry(): Promise<Map<string, number>> {
-  const map = new Map<string, number>();
+// ── Schema fetch ────────────────────────────────────────────────────────────
+async function fetchDatasetColumns(): Promise<string[]> {
   try {
-    const res = await fetch('/sample-variables-registry.csv');
-    if (!res.ok) return map;
-    const text = await res.text();
-    const lines = text.trim().split('\n');
-    const header = lines[0].split(',').map((h) => h.trim());
-    const nameIdx = header.indexOf('Variable');
-    const idIdx = header.indexOf('VariableID');
-    if (nameIdx === -1 || idIdx === -1) return map;
-    lines.slice(1).forEach((line) => {
-      const cols = line.split(',').map((c) => c.trim());
-      const name = cols[nameIdx];
-      const id = Number(cols[idIdx]);
-      if (name && Number.isFinite(id)) map.set(name, id);
-    });
-  } catch {
-    /* ignore — empty registry is valid */
-  }
-  return map;
-}
-
-async function resolveVarIds(): Promise<Map<string, number>> {
-  if (varRegistryCache) return varRegistryCache;
-  if (varRegistryPromise) return varRegistryPromise;
-  varRegistryPromise = (async () => {
-    const map = new Map<string, number>();
-    if (IS_LOCAL) {
-      const local = await fetchLocalRegistry();
-      local.forEach((v, k) => map.set(k, v));
-      varRegistryCache = map;
-      return map;
-    }
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const rows = (await (domo as any).get(
-        `/data/v1/${VARIABLES_DATASET_ALIAS}?fields=Variable,VariableID`
-      )) as { Variable?: string; VariableID?: string | number }[];
-      for (const r of rows ?? []) {
-        const name = r?.Variable ? String(r.Variable) : '';
-        const idNum = Number(r?.VariableID);
-        if (name && Number.isFinite(idNum)) map.set(name, idNum);
+    const cached = localStorage.getItem(COLUMNS_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached) as { at: number; cols: string[] };
+      if (Date.now() - parsed.at < COLUMNS_TTL_MS && Array.isArray(parsed.cols)) {
+        return parsed.cols;
       }
-    } catch (e) {
-      console.warn('[resolveVarIds] registry dataset unavailable', e);
     }
-    varRegistryCache = map;
-    return map;
-  })();
-  return varRegistryPromise;
+  } catch {
+    /* ignore */
+  }
+  let cols: string[] = [];
+  try {
+    if (IS_LOCAL) {
+      const res = await fetch('/sample-data.csv');
+      const text = await res.text();
+      const header = text.trim().split('\n')[0];
+      cols = header.split(',').map((h) => h.trim()).filter(Boolean);
+    } else {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const rows = (await (domo as any).post(
+        `/sql/v1/${DATASET_ALIAS}`,
+        `SELECT * FROM ${DATASET_ALIAS} LIMIT 1`,
+        { contentType: 'text/plain' }
+      )) as unknown;
+      // Response shape varies: {columns:[...]}, or array of row objects.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const r = rows as any;
+      if (r && Array.isArray(r.columns)) cols = r.columns.map(String);
+      else if (Array.isArray(r) && r.length && typeof r[0] === 'object') {
+        cols = Object.keys(r[0]);
+      } else if (r && Array.isArray(r.rows) && r.rows.length) {
+        cols = Object.keys(r.rows[0]);
+      }
+    }
+  } catch (e) {
+    console.warn('[fetchDatasetColumns] failed', e);
+  }
+  if (cols.length) {
+    try {
+      localStorage.setItem(COLUMNS_CACHE_KEY, JSON.stringify({ at: Date.now(), cols }));
+    } catch {
+      /* ignore */
+    }
+  }
+  return cols;
 }
 
 async function fetchLocalDates(): Promise<string[]> {
@@ -253,49 +227,8 @@ async function fetchLocalDates(): Promise<string[]> {
   return Array.from(seen).sort();
 }
 
-// ── Module-level variable detection ──────────────────────────────────────────
-const detectedVars = new Map<number, DetectedVar>();
-const detectedVarsListeners = new Set<() => void>();
-function notifyDetected() {
-  detectedVarsListeners.forEach((fn) => {
-    try {
-      fn();
-    } catch {
-      /* ignore */
-    }
-  });
-}
-let listenerRegistered = false;
-function registerVariablesListener() {
-  if (listenerRegistered) return;
-  listenerRegistered = true;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (domo as any).onVariablesUpdated((vars: any) => {
-      const ingest = (fid: unknown, name: unknown, value: unknown) => {
-        const n = typeof fid === 'number' ? fid : Number(fid);
-        if (!Number.isFinite(n)) return;
-        detectedVars.set(n, {
-          functionId: n,
-          name: typeof name === 'string' ? name : undefined,
-          value,
-        });
-      };
-      if (Array.isArray(vars)) {
-        vars.forEach((v) => ingest(v?.functionId, v?.name, v?.value));
-      } else if (vars && typeof vars === 'object') {
-        Object.entries(vars).forEach(([k, entry]) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const e = entry as any;
-          ingest(k, e?.name, e?.parsedExpression?.value ?? e?.value);
-        });
-      }
-      notifyDetected();
-    });
-  } catch (e) {
-    console.warn('[registerVariablesListener]', e);
-  }
-}
+// ── Echo guard ──────────────────────────────────────────────────────────────
+let isFiltersEmittedFromApp = false;
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const GearIcon = () => (
@@ -307,75 +240,43 @@ const GearIcon = () => (
 
 // ── Component ──────────────────────────────────────────────────────────────────
 export default function App() {
-  // Data
   const [availableDates, setAvailableDates] = useState<Set<string>>(new Set());
   const [sortedDates, setSortedDates] = useState<string[]>([]);
   const [dataStatus, setDataStatus] = useState<'loading' | 'ready' | 'error'>('loading');
   const [dataError, setDataError] = useState('');
 
-  // Selection
   const [selectionMode, setSelectionMode] = useState<SelectionMode>('single');
   const [singleSelected, setSingleSelected] = useState<Date | undefined>();
   const [rangeSelected, setRangeSelected] = useState<DateRange | undefined>();
 
-  // View
-  // Default to 'list' (dropdown) for everyone. Admin can opt into 'calendar'
-  // via the gear panel's Default view radio.
   const [viewMode, setViewMode] = useState<ViewMode>('list');
   const [showSettings, setShowSettings] = useState(false);
 
-  // Settings (refs for callbacks)
   const configDocIdRef = useRef<string | null>(null);
   const stateDocIdRef = useRef<string | null>(null);
-  const functionIdRef = useRef<number | null>(DEFAULT_SINGLE_FID);
-  const rangeStartFidRef = useRef<number | null>(null);
-  const rangeEndFidRef = useRef<number | null>(null);
   const selectionModeRef = useRef<SelectionMode>('single');
-  const variableNameRef = useRef<string | null>(null);
 
-  // Settings (state for display)
-  const [functionId, setFunctionId] = useState<number | null>(DEFAULT_SINGLE_FID);
-  const [rangeStartFid, setRangeStartFid] = useState<number | null>(null);
-  const [rangeEndFid, setRangeEndFid] = useState<number | null>(null);
-  const [variableName, setVariableName] = useState<string>('');
-  const [registry, setRegistry] = useState<Map<string, number>>(new Map());
+  const [columns, setColumns] = useState<string[]>([]);
+  const [filterColumn, setFilterColumn] = useState<string>('');
+  const [filterOperator, setFilterOperator] = useState<FilterOperator>('EQUALS');
+  const [filterDataType, setFilterDataType] = useState<FilterDataType>('DATE');
+  const filterColumnRef = useRef<string>('');
+  const filterOperatorRef = useRef<FilterOperator>('EQUALS');
+  const filterDataTypeRef = useRef<FilterDataType>('DATE');
+  const [legacyDetected, setLegacyDetected] = useState(false);
 
-  // v1.2: per-card view + format preferences.
   const [dateFormat, setDateFormat] = useState<DateFormat>('YYYY-MMM-DD');
   const dateFormatRef = useRef<DateFormat>('YYYY-MMM-DD');
   const viewModeRef = useRef<ViewMode>('list');
 
-  // v1.2: role-gated rendering. Admin sees toolbar + gear, user sees content only.
   const [role, setRole] = useState<Role>(IS_LOCAL ? 'admin' : 'user');
 
-  // Settings inputs
-  const [inputFid, setInputFid] = useState(String(DEFAULT_SINGLE_FID));
-  const [inputRangeStartFid, setInputRangeStartFid] = useState('');
-  const [inputRangeEndFid, setInputRangeEndFid] = useState('');
-  const [autoDetected, setAutoDetected] = useState(false);
-  const [detected, setDetected] = useState<DetectedVar[]>([]);
-
-  // Responsive
   const [isWide, setIsWide] = useState(
     () => window.matchMedia('(min-width: 720px)').matches
   );
 
   // ── Effects ──────────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    if (!IS_LOCAL) registerVariablesListener();
-    const onChange = () => setDetected(Array.from(detectedVars.values()));
-    detectedVarsListeners.add(onChange);
-    onChange();
-    // v1.2: page-controls REST discovery dropped — onVariablesUpdated event
-    // bus is the only auto-detect path. Variables registry dataset handles
-    // the named-variable lookup. No more dev-console snippet workaround.
-    return () => {
-      detectedVarsListeners.delete(onChange);
-    };
-  }, []);
-
-  // v1.2: resolve role once on mount. Result feeds the toolbar/gear gate.
   useEffect(() => {
     resolveRole().then(setRole).catch(() => setRole('user'));
   }, []);
@@ -389,61 +290,43 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      // Load registry first — loadSettings's rehydrateVariables path relies on
-      // effectiveFid() being able to resolve names that were persisted.
-      const reg = await resolveVarIds();
-      setRegistry(reg);
+      fetchDatasetColumns().then(setColumns);
       await loadSettings();
       await fetchDates();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Auto-adopt detected variables — zero-config UX so end users never see IDs.
-  // First date-shaped var → single-mode + range-end. Second → range-start.
+  // ── onFiltersUpdate: ignore self-echos; hydrate from external filter set ─
   useEffect(() => {
-    if (detected.length === 0) return;
-    const dateVars = detected.filter(
-      (v) =>
-        typeof v.value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(String(v.value))
-    );
-    const ordered = dateVars.length > 0 ? dateVars : detected;
-    const first = ordered[0];
-    const second = ordered[1];
-
-    // First var → single mode if not set
-    if (functionIdRef.current === null && first) {
-      applyFunctionId(first.functionId, true);
-      setAutoDetected(true);
-      persistSettings({ functionId: first.functionId }, true);
+    if (IS_LOCAL) return;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (domo as any).onFiltersUpdate((filters: any[]) => {
+        if (isFiltersEmittedFromApp) {
+          isFiltersEmittedFromApp = false;
+          return;
+        }
+        const col = filterColumnRef.current;
+        if (!col || !Array.isArray(filters)) return;
+        const mine = filters.find((f) => f?.column === col);
+        if (!mine || !Array.isArray(mine.values) || mine.values.length === 0) return;
+        const first = String(mine.values[0]);
+        const iso = first.length >= 10 ? first.slice(0, 10) : first;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+          setSingleSelected(isoToDate(iso));
+        }
+      });
+    } catch (e) {
+      console.warn('[onFiltersUpdate]', e);
     }
-    // Second var → range start if not set
-    if (rangeStartFidRef.current === null && second) {
-      rangeStartFidRef.current = second.functionId;
-      setRangeStartFid(second.functionId);
-      setInputRangeStartFid(String(second.functionId));
-      // range end falls back to single var via applyRange chain
-      persistSettings({ rangeStartFunctionId: second.functionId }, true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [detected]);
+  }, []);
 
   // ── Settings helpers ─────────────────────────────────────────────────────────
-
-  function applyFunctionId(fid: number, silent = false) {
-    functionIdRef.current = fid;
-    setFunctionId(fid);
-    setInputFid(String(fid));
-    if (!silent) setAutoDetected(false);
-  }
 
   async function loadSettings() {
     try {
       const docs = await collBackend.queryAll();
-
-      // v1.2: partition by type AND cardId. Prefer card-keyed docs; legacy
-      // docs without `cardId` are treated as a design-wide default safety net
-      // (read-only on first load — next save creates a card-keyed doc).
       const configDocs = docs?.filter(
         (d) => d.content?.type === 'config' || d.content?.type === undefined
       ) ?? [];
@@ -457,37 +340,30 @@ export default function App() {
 
       if (configDoc) {
         const { id, content } = configDoc;
-        // Only adopt the doc id if it's already card-keyed; legacy unkeyed
-        // doc id should NOT be reused for future writes (we want a fresh
-        // card-keyed doc on next save).
         const c = content as ConfigDoc;
         if (c.cardId === CURRENT_CARD_ID) configDocIdRef.current = id;
-        const fid = c.functionId ?? DEFAULT_SINGLE_FID;
-        const rsf = c.rangeStartFunctionId ?? null;
-        const ref = c.rangeEndFunctionId ?? null;
-        // Force single while Between is masked — stored 'between' from prior
-        // run shouldn't surface a UI we've removed.
         const mode = HIDE_BETWEEN ? 'single' : (c.mode ?? 'single');
-        const vname = c.variableName ?? '';
         const vm: ViewMode = c.viewMode ?? 'list';
         const df: DateFormat = c.dateFormat ?? 'YYYY-MMM-DD';
-        functionIdRef.current = fid;
-        rangeStartFidRef.current = rsf;
-        rangeEndFidRef.current = ref;
+        const fc = c.filterColumn ?? '';
+        const fo: FilterOperator = c.filterOperator ?? 'EQUALS';
+        const fdt: FilterDataType = c.filterDataType ?? 'DATE';
         selectionModeRef.current = mode;
-        variableNameRef.current = vname || null;
         viewModeRef.current = vm;
         dateFormatRef.current = df;
-        setFunctionId(fid);
-        setRangeStartFid(rsf);
-        setRangeEndFid(ref);
+        filterColumnRef.current = fc;
+        filterOperatorRef.current = fo;
+        filterDataTypeRef.current = fdt;
         setSelectionMode(mode);
-        setVariableName(vname);
         setViewMode(vm);
         setDateFormat(df);
-        setInputFid(String(fid));
-        if (rsf) setInputRangeStartFid(String(rsf));
-        if (ref) setInputRangeEndFid(String(ref));
+        setFilterColumn(fc);
+        setFilterOperator(fo);
+        setFilterDataType(fdt);
+        if (!fc && c.functionId) {
+          setLegacyDetected(true);
+          console.warn('[loadSettings] legacy variable-era config detected — pick a Filter column to migrate.');
+        }
       }
 
       if (stateDoc) {
@@ -501,61 +377,65 @@ export default function App() {
             to: s.rangeEnd ? isoToDate(s.rangeEnd) : undefined,
           });
         }
-        // Re-fire variables so cards restore filter without user re-clicking.
-        rehydrateVariables(s);
+        rehydrateFilter(s);
       }
     } catch (e) {
       console.warn('[loadSettings]', e);
     }
   }
 
-  // Resolve which functionId the brick should push. Registry-by-name takes
-  // priority; falls back to the legacy raw functionId stored in config.
-  // Reads the module-level cache (varRegistryCache) directly so callbacks
-  // that fire before the React `registry` state has populated still resolve.
-  // Returns null if neither is configured / resolvable.
-  function effectiveFid(): number | null {
-    const name = variableNameRef.current;
-    if (name) {
-      const fid = varRegistryCache?.get(name) ?? registry.get(name);
-      if (typeof fid === 'number') return fid;
-      console.warn(`[effectiveFid] '${name}' not in registry — falling back to functionId`);
-    }
-    return functionIdRef.current ?? null;
+  function buildFilterPayload(values: string[]): Record<string, unknown>[] {
+    const col = filterColumnRef.current;
+    if (!col || values.length === 0) return [];
+    return [
+      {
+        column: col,
+        operator: filterOperatorRef.current,
+        values,
+        dataType: filterDataTypeRef.current,
+      },
+    ];
   }
 
-  function rehydrateVariables(s: StateDoc) {
-    const updates: { functionId: number; value: string }[] = [];
-    if (selectionModeRef.current === 'single' && s.singleDate) {
-      const fid = effectiveFid();
-      if (fid !== null) updates.push({ functionId: fid, value: s.singleDate });
-    }
-    if (selectionModeRef.current === 'between' && s.rangeStart) {
-      const startFid = rangeStartFidRef.current;
-      const endFid = rangeEndFidRef.current ?? effectiveFid();
-      const to = s.rangeEnd ?? s.rangeStart;
-      if (startFid) updates.push({ functionId: startFid, value: s.rangeStart });
-      if (endFid && endFid !== startFid)
-        updates.push({ functionId: endFid, value: to });
-    }
-    if (updates.length === 0) return;
+  function emitFilter(payload: Record<string, unknown>[]) {
+    if (payload.length === 0) return;
     if (IS_LOCAL) {
-      console.log('[DEV] rehydrate variables:', updates);
+      console.log('[DEV] emit filterContainer:', payload);
       return;
     }
-    domo.requestVariablesUpdate(updates, () => {}, () => {});
+    isFiltersEmittedFromApp = true;
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (domo as any).filterContainer(payload);
+    } catch (e) {
+      isFiltersEmittedFromApp = false;
+      console.error('[emitFilter]', e);
+    }
+  }
+
+  function rehydrateFilter(s: StateDoc) {
+    if (!filterColumnRef.current) return;
+    if (selectionModeRef.current === 'single' && s.singleDate) {
+      emitFilter(buildFilterPayload([s.singleDate]));
+    } else if (selectionModeRef.current === 'between' && s.rangeStart) {
+      const from = s.rangeStart;
+      const to = s.rangeEnd ?? s.rangeStart;
+      const prev = filterOperatorRef.current;
+      filterOperatorRef.current = 'BETWEEN';
+      emitFilter(buildFilterPayload([from, to]));
+      filterOperatorRef.current = prev;
+    }
   }
 
   async function persistSettings(patch: Partial<ConfigDoc>, silent = false) {
     try {
       const current: ConfigDoc = {
-        functionId: functionIdRef.current ?? undefined,
-        variableName: variableNameRef.current ?? undefined,
         mode: selectionModeRef.current,
-        rangeStartFunctionId: rangeStartFidRef.current ?? undefined,
-        rangeEndFunctionId: rangeEndFidRef.current ?? undefined,
         viewMode: viewModeRef.current,
         dateFormat: dateFormatRef.current,
+        filterColumn: filterColumnRef.current || undefined,
+        filterOperator: filterOperatorRef.current,
+        filterDataType: filterDataTypeRef.current,
         ...patch,
         type: 'config',
         cardId: CURRENT_CARD_ID,
@@ -574,15 +454,13 @@ export default function App() {
 
   async function persistState(patch: Partial<Omit<StateDoc, 'type'>>) {
     try {
-      // Read-modify-write: preserve unrelated fields (singleDate stays when
-      // only the range changes, and vice versa).
       const existing: Partial<StateDoc> = {};
       if (stateDocIdRef.current) {
         try {
           const doc = await collBackend.getOne(stateDocIdRef.current);
           if (doc?.content) Object.assign(existing, doc.content);
         } catch {
-          /* fall through to create */
+          /* fall through */
         }
       }
       const next: StateDoc = {
@@ -602,56 +480,25 @@ export default function App() {
     }
   }
 
-  async function saveSettingsFromForm() {
-    const fid = parseInt(inputFid, 10);
-    const rsf = inputRangeStartFid ? parseInt(inputRangeStartFid, 10) : null;
-    const ref = inputRangeEndFid ? parseInt(inputRangeEndFid, 10) : null;
-    if (!isNaN(fid)) {
-      functionIdRef.current = fid;
-      setFunctionId(fid);
-    }
-    if (rsf !== null && !isNaN(rsf)) {
-      rangeStartFidRef.current = rsf;
-      setRangeStartFid(rsf);
-    }
-    if (ref !== null && !isNaN(ref)) {
-      rangeEndFidRef.current = ref;
-      setRangeEndFid(ref);
-    }
-    setAutoDetected(false);
-    await persistSettings({
-      functionId: !isNaN(fid) ? fid : undefined,
-      rangeStartFunctionId: rsf !== null && !isNaN(rsf) ? rsf : undefined,
-      rangeEndFunctionId: ref !== null && !isNaN(ref) ? ref : undefined,
-    });
-  }
-
   async function resetSettings() {
     try {
       if (configDocIdRef.current) await collBackend.delete(configDocIdRef.current);
       if (stateDocIdRef.current) await collBackend.delete(stateDocIdRef.current);
       configDocIdRef.current = null;
       stateDocIdRef.current = null;
-      functionIdRef.current = null;
-      rangeStartFidRef.current = null;
-      rangeEndFidRef.current = null;
-      variableNameRef.current = null;
+      filterColumnRef.current = '';
+      filterOperatorRef.current = 'EQUALS';
+      filterDataTypeRef.current = 'DATE';
       viewModeRef.current = 'list';
       dateFormatRef.current = 'YYYY-MMM-DD';
-      setFunctionId(null);
-      setRangeStartFid(null);
-      setRangeEndFid(null);
-      setVariableName('');
+      setFilterColumn('');
+      setFilterOperator('EQUALS');
+      setFilterDataType('DATE');
       setViewMode('list');
       setDateFormat('YYYY-MMM-DD');
-      setInputFid('');
-      setInputRangeStartFid('');
-      setInputRangeEndFid('');
       setSingleSelected(undefined);
       setRangeSelected(undefined);
-      setAutoDetected(false);
-      detectedVars.clear();
-      notifyDetected();
+      setLegacyDetected(false);
     } catch (e) {
       console.error('[resetSettings]', e);
     }
@@ -712,8 +559,6 @@ export default function App() {
     const minISO = sortedDates[0];
     const maxISO = sortedDates[sortedDates.length - 1];
     const result: { label: string; range: DateRange }[] = [];
-
-    // This month
     const mStart = toISO(startOfMonth(today));
     const mEnd = toISO(endOfMonth(today));
     const thisMo = sortedDates.filter((d) => d >= mStart && d <= mEnd);
@@ -723,8 +568,6 @@ export default function App() {
         range: { from: isoToDate(thisMo[0]), to: isoToDate(thisMo[thisMo.length - 1]) },
       });
     }
-
-    // Last 30 days
     const l30Start = toISO(subDays(today, 29));
     const l30 = sortedDates.filter((d) => d >= l30Start && d <= todayISO);
     if (l30.length > 0) {
@@ -733,8 +576,6 @@ export default function App() {
         range: { from: isoToDate(l30[0]), to: isoToDate(l30[l30.length - 1]) },
       });
     }
-
-    // YTD
     const ytdStart = toISO(startOfYear(today));
     const ytd = sortedDates.filter((d) => d >= ytdStart && d <= todayISO);
     if (ytd.length > 0) {
@@ -743,13 +584,10 @@ export default function App() {
         range: { from: isoToDate(ytd[0]), to: isoToDate(ytd[ytd.length - 1]) },
       });
     }
-
-    // All data
     result.push({
       label: 'All data',
       range: { from: isoToDate(minISO), to: isoToDate(maxISO) },
     });
-
     return result;
   }, [sortedDates]);
 
@@ -763,7 +601,7 @@ export default function App() {
         (rangeSelected.to.getTime() - rangeSelected.from.getTime()) / 86400000
       ) + 1;
     return `${from} → ${to} (${days} day${days !== 1 ? 's' : ''})`;
-  }, [rangeSelected]);
+  }, [rangeSelected, dateFormat]);
 
   const toolbarLabel = useMemo(() => {
     if (selectionMode === 'single' && singleSelected) {
@@ -784,56 +622,29 @@ export default function App() {
       if (!availableDates.has(iso)) return;
       setSingleSelected(date);
       persistState({ singleDate: iso });
-      const fid = effectiveFid();
-      if (IS_LOCAL) {
-        console.log('[DEV] single pick:', iso, '(fid=', fid, ')');
-        return;
-      }
-      if (fid !== null) {
-        domo.requestVariablesUpdate(
-          [{ functionId: fid, value: iso }],
-          () => {},
-          () => {}
-        );
-      }
+      if (!filterColumnRef.current) return;
+      // Force single-value operator (avoid BETWEEN which needs two values).
+      const op = filterOperatorRef.current;
+      if (op === 'BETWEEN') filterOperatorRef.current = 'EQUALS';
+      emitFilter(buildFilterPayload([iso]));
+      filterOperatorRef.current = op;
     },
     [availableDates]
   );
 
-  // Apply: push range to whatever variables are bound to the brick.
-  // Fallback chain: if no dedicated range vars configured, push END date to
-  // the single-mode variable so existing cards filtered by vTillSelectedMonth
-  // still update. Zero-config Between works as long as ANY var is bound.
   const applyRange = useCallback(() => {
     if (!rangeSelected?.from) return;
     const from = toISO(rangeSelected.from);
     const to = rangeSelected.to ? toISO(rangeSelected.to) : from;
-    // Persist picked range to collection (brick state — survives reload).
     persistState({ rangeStart: from, rangeEnd: to });
-    if (IS_LOCAL) {
-      console.log('[DEV] range apply:', from, '→', to);
+    if (!filterColumnRef.current) {
+      console.warn('[applyRange] no filter column configured');
       return;
     }
-    // Fire App Studio variables so cards re-filter. Collection is brick memory,
-    // variables are filter transport — cards never touch the collection.
-    const startFid = rangeStartFidRef.current;
-    const endFid = rangeEndFidRef.current ?? effectiveFid();
-    const updates: { functionId: number; value: string }[] = [];
-    if (startFid) updates.push({ functionId: startFid, value: from });
-    if (endFid && endFid !== startFid)
-      updates.push({ functionId: endFid, value: to });
-    if (updates.length === 0) {
-      console.warn(
-        '[applyRange] no variable bound to brick — App Studio designer must map at least one Date variable'
-      );
-      return;
-    }
-    console.log('[applyRange] firing variables update:', updates);
-    domo.requestVariablesUpdate(
-      updates,
-      () => console.log('[applyRange] ✓ update accepted'),
-      (err: unknown) => console.error('[applyRange] update failed:', err)
-    );
+    const prev = filterOperatorRef.current;
+    filterOperatorRef.current = 'BETWEEN';
+    emitFilter(buildFilterPayload([from, to]));
+    filterOperatorRef.current = prev;
   }, [rangeSelected]);
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -848,129 +659,117 @@ export default function App() {
   if (dataStatus === 'error')
     return <div className="state-msg error">Failed to load dates: {dataError}</div>;
 
+  const samplePreviewDate = singleSelected ? toISO(singleSelected) : 'YYYY-MM-DD';
+
   return (
     <div className={`app mode-${role}`}>
-      {/* Screen-reader-only selected-date announcement (label visually hidden) */}
       {toolbarLabel && (
         <span className="sr-only" aria-live="polite">
           Selected: {toolbarLabel}
         </span>
       )}
-      {/* ── Toolbar — admin/owner only. End users see content only.
-           Calendar/List toggle buttons removed from the toolbar; admins
-           switch view via the gear panel's "Default view" radio so the
-           default surface is always the dropdown for everyone. ── */}
       {role === 'admin' && (
-      <div className="toolbar">
-        <div className="toggle-group">
-          <button
-            className={`toggle-btn ${showSettings ? 'active' : ''}`}
-            onClick={() => setShowSettings((s) => !s)}
-            title="Settings"
-          >
-            <GearIcon />
-          </button>
+        <div className="toolbar">
+          <div className="toggle-group">
+            <button
+              className={`toggle-btn ${showSettings ? 'active' : ''}`}
+              onClick={() => setShowSettings((s) => !s)}
+              title="Settings"
+            >
+              <GearIcon />
+            </button>
+          </div>
         </div>
-      </div>
       )}
 
-      {/* ── Settings panel — admin/owner only ── */}
       {role === 'admin' && showSettings && (
         <div className="settings-panel">
-          <label className="settings-label">Variable Configuration</label>
-
-          {detected.length > 0 && (() => {
-            // Surface date-typed vars first — they're what this brick can drive.
-            // 'value' on a detected var is the live variable value pushed by
-            // App Studio; an ISO-date shape is the strongest signal.
-            const isDateShaped = (v: DetectedVar) =>
-              typeof v.value === 'string' &&
-              /^\d{4}-\d{2}-\d{2}/.test(String(v.value));
-            const isDateNamed = (v: DetectedVar) =>
-              !!v.name && /date|month|day|year|period|till|start|end/i.test(v.name);
-            const dateVars = detected.filter((v) => isDateShaped(v) || isDateNamed(v));
-            const otherVars = detected.filter(
-              (v) => !(isDateShaped(v) || isDateNamed(v))
-            );
-            return (
-              <div className="settings-detected">
-                <p className="settings-hint">
-                  Detected on this page — pick the variable this brick should
-                  drive ({dateVars.length} date-typed, {otherVars.length} other):
-                </p>
-                <select
-                  className="settings-input"
-                  value={functionId ?? ''}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (!v) return;
-                    const fid = Number(v);
-                    if (!Number.isFinite(fid)) return;
-                    applyFunctionId(fid);
-                    persistSettings({ functionId: fid }, true);
-                  }}
-                >
-                  <option value="">— select a variable —</option>
-                  {dateVars.length > 0 && (
-                    <optgroup label="Date-typed">
-                      {dateVars.map((v) => (
-                        <option key={v.functionId} value={v.functionId}>
-                          {(v.name || `Variable ${v.functionId}`)} ({v.functionId})
-                          {typeof v.value === 'string' ? ` — current: ${v.value}` : ''}
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                  {otherVars.length > 0 && (
-                    <optgroup label="Other detected">
-                      {otherVars.map((v) => (
-                        <option key={v.functionId} value={v.functionId}>
-                          {(v.name || `Variable ${v.functionId}`)} ({v.functionId})
-                        </option>
-                      ))}
-                    </optgroup>
-                  )}
-                </select>
-              </div>
-            );
-          })()}
+          <label className="settings-label">Filter Configuration</label>
 
           <div className="settings-group">
-            <label className="settings-sublabel">
-              Variable name
-            </label>
-            <input
+            <label className="settings-sublabel">Filter column</label>
+            <select
               className="settings-input"
-              type="text"
-              placeholder="e.g. vTillSelectedMonth"
-              list="variable-name-options"
-              value={variableName}
+              value={filterColumn}
               onChange={(e) => {
                 const v = e.target.value;
-                setVariableName(v);
-                variableNameRef.current = v || null;
-                persistSettings({ variableName: v || undefined }, true);
+                setFilterColumn(v);
+                filterColumnRef.current = v;
+                persistSettings({ filterColumn: v || undefined }, true);
               }}
-            />
-            <datalist id="variable-name-options">
-              {Array.from(registry.keys()).map((n) => (
-                <option key={n} value={n}>{`${n} (${registry.get(n)})`}</option>
+            >
+              <option value="">— select a column —</option>
+              {columns.map((c) => (
+                <option key={c} value={c}>{c}</option>
               ))}
-            </datalist>
-            {registry.size === 0 && (
+            </select>
+            {columns.length === 0 && (
               <p className="settings-hint">
-                No <code>variablesDataSet</code> bound — fill in the legacy ID
-                below, or bind a registry dataset (see SETUP.md).
+                No columns discovered. Confirm dataset alias <code>{DATASET_ALIAS}</code>
+                {' '}is bound. You may also type a column name below:
               </p>
             )}
-            {variableName && registry.size > 0 && !registry.has(variableName) && (
-              <p className="settings-hint" style={{ color: '#c0392b' }}>
-                ⚠ '{variableName}' not in registry — will fall back to legacy ID
-              </p>
+            {columns.length === 0 && (
+              <input
+                className="settings-input"
+                type="text"
+                placeholder="Column name (fallback)"
+                value={filterColumn}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setFilterColumn(v);
+                  filterColumnRef.current = v;
+                  persistSettings({ filterColumn: v || undefined }, true);
+                }}
+              />
             )}
           </div>
 
-          {/* v1.2: per-card default view + date format */}
+          <div className="settings-group">
+            <label className="settings-sublabel">Filter operator</label>
+            <select
+              className="settings-input"
+              value={filterOperator}
+              onChange={(e) => {
+                const v = e.target.value as FilterOperator;
+                setFilterOperator(v);
+                filterOperatorRef.current = v;
+                persistSettings({ filterOperator: v }, true);
+              }}
+            >
+              <option value="EQUALS">EQUALS (single date)</option>
+              <option value="LESS_THAN_EQUALS_TO">LESS_THAN_EQUALS_TO (through date)</option>
+              <option value="GREAT_THAN_EQUALS_TO">GREAT_THAN_EQUALS_TO (from date)</option>
+              <option value="BETWEEN">BETWEEN (range)</option>
+            </select>
+          </div>
+
+          <div className="settings-group">
+            <label className="settings-sublabel">Data type</label>
+            <select
+              className="settings-input"
+              value={filterDataType}
+              onChange={(e) => {
+                const v = e.target.value as FilterDataType;
+                setFilterDataType(v);
+                filterDataTypeRef.current = v;
+                persistSettings({ filterDataType: v }, true);
+              }}
+            >
+              <option value="DATE">DATE</option>
+              <option value="STRING">STRING</option>
+              <option value="NUMERIC">NUMERIC</option>
+            </select>
+          </div>
+
+          <p className="settings-hint">
+            Preview payload:{' '}
+            <code>
+              [{'{'}column:"{filterColumn || '?'}", operator:"{filterOperator}",
+              values:["{samplePreviewDate}"], dataType:"{filterDataType}"{'}'}]
+            </code>
+          </p>
+
           <div className="settings-group">
             <label className="settings-sublabel">Default view</label>
             <div className="settings-radio-row">
@@ -1026,66 +825,18 @@ export default function App() {
             </p>
           </div>
 
-          {/* Numeric variable ID — always visible. The registry path is
-              preferred but many NAB pages don't have the registry dataset
-              bound yet, so the numeric ID is the practical fallback. */}
-          <div className="settings-group">
-            <label className="settings-sublabel">
-              Variable ID (numeric)
-            </label>
-            <input
-              className="settings-input"
-              type="number"
-              placeholder="e.g. 131272"
-              value={inputFid}
-              onChange={(e) => setInputFid(e.target.value)}
-            />
-            <p className="settings-hint">
-              Used when Variable name above is empty or not found in the
-              registry dataset. Click <strong>Save</strong> below to apply.
-            </p>
-          </div>
-
-          {/* No-wiring warning — surface when neither path will resolve */}
-          {!variableName && (functionId === null || Number.isNaN(parseInt(inputFid, 10))) && (
+          {!filterColumn && (
             <p className="range-config-warn">
-              ⚠ No variable bound. Either type a Variable name above (if the
-              registry dataset is bound) OR enter a numeric Variable ID and
-              click Save. Picking a date will not filter cards until one of
-              these is set.
+              ⚠ No filter column selected — date picks will not affect cards.
             </p>
           )}
-
-          {!HIDE_BETWEEN && (
-          <div className="settings-group">
-            <label className="settings-sublabel">Range start variable ID</label>
-            <input
-              className="settings-input"
-              type="number"
-              placeholder="TBD — confirm with customer"
-              value={inputRangeStartFid}
-              onChange={(e) => setInputRangeStartFid(e.target.value)}
-            />
-          </div>
-          )}
-
-          {!HIDE_BETWEEN && (
-          <div className="settings-group">
-            <label className="settings-sublabel">Range end variable ID</label>
-            <input
-              className="settings-input"
-              type="number"
-              placeholder="TBD — confirm with customer"
-              value={inputRangeEndFid}
-              onChange={(e) => setInputRangeEndFid(e.target.value)}
-            />
-          </div>
+          {legacyDetected && (
+            <p className="range-config-warn">
+              ⚠ Legacy variable-era config detected. Pick a Filter column above to migrate.
+            </p>
           )}
 
           <div className="settings-actions">
-            <button className="settings-save" onClick={saveSettingsFromForm}>
-              Save
-            </button>
             <button className="settings-reset" onClick={resetSettings}>
               Reset
             </button>
@@ -1093,17 +844,15 @@ export default function App() {
 
           <p className="settings-saved">
             <strong>Admin</strong> · Card {CURRENT_CARD_ID.slice(0, 8)}
-            {variableName && <> · driving <code>{variableName}</code></>}
-            {!variableName && functionId !== null && <> · fid {functionId}</>}
-            {autoDetected && <span className="settings-auto"> (auto-detected)</span>}
+            {filterColumn && (
+              <> · filter=<code>{filterColumn}</code> {filterOperator}</>
+            )}
           </p>
         </div>
       )}
 
-      {/* ── Main calendar area ── */}
       {!showSettings && (
         <>
-          {/* Selection mode toggle — hidden while Between is masked. */}
           {!HIDE_BETWEEN && (
             <div className="mode-toggle">
               <button
@@ -1121,9 +870,6 @@ export default function App() {
             </div>
           )}
 
-          {/* List / dropdown — single mode only.
-              End users ALWAYS see the dropdown regardless of saved viewMode.
-              Admins follow the saved view setting. */}
           {selectionMode === 'single' && (role === 'user' || viewMode === 'list') && (
             <div className="text-mode">
               <select
@@ -1143,7 +889,6 @@ export default function App() {
             </div>
           )}
 
-          {/* Calendar — admin only (end users see only the dropdown above) */}
           {role === 'admin' && viewMode === 'calendar' && (
             <div className="cal-wrapper">
               {selectionMode === 'single' ? (
@@ -1174,11 +919,9 @@ export default function App() {
                 />
               )}
 
-              {/* Between-mode controls */}
               {selectionMode === 'between' && (
                 <>
                   <p className="status-text">{statusText}</p>
-
                   {presets.length > 0 && (
                     <div className="presets">
                       {presets.map((p) => (
@@ -1192,11 +935,9 @@ export default function App() {
                       ))}
                     </div>
                   )}
-
-                  {!functionId && !rangeStartFid && !rangeEndFid && (
+                  {!filterColumn && (
                     <p className="range-config-warn">
-                      ⚠ No variable bound to this brick. App Studio designer must
-                      map at least one Date variable in the brick's Variables panel.
+                      ⚠ No filter column configured. Pick one in the gear panel.
                     </p>
                   )}
                   <div className="range-actions">
@@ -1204,7 +945,7 @@ export default function App() {
                       className="apply-btn"
                       disabled={!rangeSelected?.from}
                       onClick={applyRange}
-                      title="Push range to bound variables"
+                      title="Emit range filter"
                     >
                       Apply
                     </button>
@@ -1222,12 +963,10 @@ export default function App() {
         </>
       )}
 
-      {/* Single-mode warning — admin/owner only */}
-      {role === 'admin' && !showSettings && selectionMode === 'single' && !functionId && !variableName && (
-        <p className="warn">⚠ No Date variable bound to this brick</p>
+      {role === 'admin' && !showSettings && !filterColumn && (
+        <p className="warn">⚠ No filter column configured — open settings</p>
       )}
 
-      {/* IS_LOCAL dev-only role preview toggle */}
       {IS_LOCAL && (
         <button
           className="dev-role-toggle"
