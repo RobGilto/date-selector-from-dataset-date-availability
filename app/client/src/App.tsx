@@ -43,12 +43,6 @@ interface ConfigDoc {
   filterColumn?: string;
   filterOperator?: FilterOperator;
   filterDataType?: FilterDataType;
-  /** @deprecated v1.3 — variable-era field, ignored on read */
-  functionId?: number;
-  /** @deprecated v1.3 */
-  rangeStartFunctionId?: number;
-  /** @deprecated v1.3 */
-  rangeEndFunctionId?: number;
 }
 
 interface StateDoc {
@@ -263,7 +257,6 @@ export default function App() {
   const filterColumnRef = useRef<string>('');
   const filterOperatorRef = useRef<FilterOperator>('EQUALS');
   const filterDataTypeRef = useRef<FilterDataType>('DATE');
-  const [legacyDetected, setLegacyDetected] = useState(false);
 
   const [dateFormat, setDateFormat] = useState<DateFormat>('YYYY-MMM-DD');
   const dateFormatRef = useRef<DateFormat>('YYYY-MMM-DD');
@@ -360,10 +353,6 @@ export default function App() {
         setFilterColumn(fc);
         setFilterOperator(fo);
         setFilterDataType(fdt);
-        if (!fc && c.functionId) {
-          setLegacyDetected(true);
-          console.warn('[loadSettings] legacy variable-era config detected — pick a Filter column to migrate.');
-        }
       }
 
       if (stateDoc) {
@@ -498,7 +487,6 @@ export default function App() {
       setDateFormat('YYYY-MMM-DD');
       setSingleSelected(undefined);
       setRangeSelected(undefined);
-      setLegacyDetected(false);
     } catch (e) {
       console.error('[resetSettings]', e);
     }
@@ -830,12 +818,6 @@ export default function App() {
               ⚠ No filter column selected — date picks will not affect cards.
             </p>
           )}
-          {legacyDetected && (
-            <p className="range-config-warn">
-              ⚠ Legacy variable-era config detected. Pick a Filter column above to migrate.
-            </p>
-          )}
-
           <div className="settings-actions">
             <button className="settings-reset" onClick={resetSettings}>
               Reset
