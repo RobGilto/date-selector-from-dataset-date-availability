@@ -26,7 +26,29 @@ const CURRENT_CARD_ID: string =
 // ── Types ─────────────────────────────────────────────────────────────────────
 type SelectionMode = 'single' | 'between';
 type ViewMode = 'calendar' | 'list';
-type DateFormat = 'YYYY-MMM' | 'YYYY-MMM-DD' | 'YYYY-MM-DD';
+// v1.3.1: dateFormat is now a date-fns format pattern string.
+// Literals inside patterns need single quotes: e.g. `yyyy ' – ' MMM`.
+type DateFormat = string;
+
+// Built-in presets always show at the top of the dropdown.
+const BUILT_IN_FORMATS: { pattern: string; label: string }[] = [
+  { pattern: "yyyy ' – ' MMM ' – ' dd", label: 'YYYY – MMM – DD (2026 – Sep – 30)' },
+  { pattern: "yyyy ' – ' MMM", label: 'YYYY – MMM (2026 – Sep)' },
+  { pattern: 'yyyy-MM-dd', label: 'YYYY-MM-DD (2026-09-30)' },
+];
+const DEFAULT_FORMAT_PATTERN = BUILT_IN_FORMATS[0].pattern;
+
+// Legacy v1.3.0 enum → date-fns pattern migration on read.
+const LEGACY_FORMAT_MAP: Record<string, string> = {
+  DEFAULT_FORMAT_PATTERN: "yyyy ' – ' MMM ' – ' dd",
+  'YYYY-MMM': "yyyy ' – ' MMM",
+  'YYYY-MM-DD': 'yyyy-MM-dd',
+};
+
+function normalizeFormatPattern(stored: string | undefined): string {
+  if (!stored) return DEFAULT_FORMAT_PATTERN;
+  return LEGACY_FORMAT_MAP[stored] ?? stored;
+}
 type FilterOperator =
   | 'EQUALS'
   | 'BETWEEN'
@@ -53,7 +75,15 @@ interface StateDoc {
   rangeEnd?: string;
 }
 
-type CollectionDoc = ConfigDoc | StateDoc;
+// v1.3.1: global custom date-format entries shared across every card
+// instance in this design. NOT scoped to cardId.
+interface FormatDoc {
+  type: 'format';
+  pattern: string;
+  label?: string;
+}
+
+type CollectionDoc = ConfigDoc | StateDoc | FormatDoc;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function toISO(d: Date): string {
@@ -69,14 +99,13 @@ function formatMonthLabel(d: Date): string {
   return `${d.getFullYear()} ${EN_DASH} ${format(d, 'MMM')}`;
 }
 
-function formatDateLabel(d: Date, fmt: DateFormat = 'YYYY-MMM-DD'): string {
-  const y = d.getFullYear();
-  const m = format(d, 'MMM');
-  const day = String(d.getDate()).padStart(2, '0');
-  const mNum = String(d.getMonth() + 1).padStart(2, '0');
-  if (fmt === 'YYYY-MMM') return `${y} ${EN_DASH} ${m}`;
-  if (fmt === 'YYYY-MM-DD') return `${y}-${mNum}-${day}`;
-  return `${y} ${EN_DASH} ${m} ${EN_DASH} ${day}`;
+function formatDateLabel(d: Date, fmt: DateFormat = DEFAULT_FORMAT_PATTERN): string {
+  const pattern = normalizeFormatPattern(fmt);
+  try {
+    return format(d, pattern);
+  } catch {
+    return format(d, DEFAULT_FORMAT_PATTERN);
+  }
 }
 
 // ── Collection backend ──────────────────────────────────────────────────────
@@ -258,9 +287,17 @@ export default function App() {
   const filterOperatorRef = useRef<FilterOperator>('EQUALS');
   const filterDataTypeRef = useRef<FilterDataType>('DATE');
 
-  const [dateFormat, setDateFormat] = useState<DateFormat>('YYYY-MMM-DD');
-  const dateFormatRef = useRef<DateFormat>('YYYY-MMM-DD');
+  const [dateFormat, setDateFormat] = useState<DateFormat>(DEFAULT_FORMAT_PATTERN);
+  const dateFormatRef = useRef<DateFormat>(DEFAULT_FORMAT_PATTERN);
   const viewModeRef = useRef<ViewMode>('list');
+
+  // v1.3.1: custom date-fns format patterns; global (shared across cards).
+  const [customFormats, setCustomFormats] = useState<
+    { id: string; pattern: string; label?: string }[]
+  >([]);
+  const [newFormatPattern, setNewFormatPattern] = useState('');
+  const [newFormatLabel, setNewFormatLabel] = useState('');
+  const [newFormatError, setNewFormatError] = useState('');
 
   const [role, setRole] = useState<Role>(IS_LOCAL ? 'admin' : 'user');
 
@@ -324,6 +361,16 @@ export default function App() {
         (d) => d.content?.type === 'config' || d.content?.type === undefined
       ) ?? [];
       const stateDocs = docs?.filter((d) => d.content?.type === 'state') ?? [];
+      const formatDocs = docs?.filter((d) => d.content?.type === 'format') ?? [];
+      setCustomFormats(
+        formatDocs
+          .map((d) => ({
+            id: d.id,
+            pattern: (d.content as FormatDoc).pattern,
+            label: (d.content as FormatDoc).label,
+          }))
+          .filter((f) => typeof f.pattern === 'string' && f.pattern.trim().length > 0)
+      );
       const configDoc =
         configDocs.find((d) => (d.content as ConfigDoc).cardId === CURRENT_CARD_ID) ??
         configDocs.find((d) => !(d.content as ConfigDoc).cardId);
@@ -337,7 +384,7 @@ export default function App() {
         if (c.cardId === CURRENT_CARD_ID) configDocIdRef.current = id;
         const mode = HIDE_BETWEEN ? 'single' : (c.mode ?? 'single');
         const vm: ViewMode = c.viewMode ?? 'list';
-        const df: DateFormat = c.dateFormat ?? 'YYYY-MMM-DD';
+        const df: DateFormat = normalizeFormatPattern(c.dateFormat);
         const fc = c.filterColumn ?? '';
         const fo: FilterOperator = c.filterOperator ?? 'EQUALS';
         const fdt: FilterDataType = c.filterDataType ?? 'DATE';
@@ -469,6 +516,58 @@ export default function App() {
     }
   }
 
+  async function addCustomFormat() {
+    const pattern = newFormatPattern.trim();
+    if (!pattern) {
+      setNewFormatError('Pattern required');
+      return;
+    }
+    try {
+      const sample = format(new Date(), pattern);
+      if (!sample) throw new Error('empty render');
+    } catch (e) {
+      setNewFormatError(`Invalid date-fns pattern: ${(e as Error).message}`);
+      return;
+    }
+    const label = newFormatLabel.trim() || undefined;
+    const allPatterns = new Set([
+      ...BUILT_IN_FORMATS.map((f) => f.pattern),
+      ...customFormats.map((f) => f.pattern),
+    ]);
+    if (allPatterns.has(pattern)) {
+      setNewFormatError('Pattern already in list');
+      return;
+    }
+    try {
+      const res = await collBackend.create({ type: 'format', pattern, label });
+      setCustomFormats((prev) => [...prev, { id: res.id, pattern, label }]);
+      setNewFormatPattern('');
+      setNewFormatLabel('');
+      setNewFormatError('');
+      dateFormatRef.current = pattern;
+      setDateFormat(pattern);
+      persistSettings({ dateFormat: pattern }, true);
+    } catch (e) {
+      console.error('[addCustomFormat]', e);
+      setNewFormatError('Save failed — see console');
+    }
+  }
+
+  async function deleteCustomFormat(id: string) {
+    try {
+      await collBackend.delete(id);
+      const removed = customFormats.find((f) => f.id === id);
+      setCustomFormats((prev) => prev.filter((f) => f.id !== id));
+      if (removed && dateFormatRef.current === removed.pattern) {
+        dateFormatRef.current = DEFAULT_FORMAT_PATTERN;
+        setDateFormat(DEFAULT_FORMAT_PATTERN);
+        persistSettings({ dateFormat: DEFAULT_FORMAT_PATTERN }, true);
+      }
+    } catch (e) {
+      console.error('[deleteCustomFormat]', e);
+    }
+  }
+
   async function resetSettings() {
     try {
       if (configDocIdRef.current) await collBackend.delete(configDocIdRef.current);
@@ -479,12 +578,12 @@ export default function App() {
       filterOperatorRef.current = 'EQUALS';
       filterDataTypeRef.current = 'DATE';
       viewModeRef.current = 'list';
-      dateFormatRef.current = 'YYYY-MMM-DD';
+      dateFormatRef.current = DEFAULT_FORMAT_PATTERN;
       setFilterColumn('');
       setFilterOperator('EQUALS');
       setFilterDataType('DATE');
       setViewMode('list');
-      setDateFormat('YYYY-MMM-DD');
+      setDateFormat(DEFAULT_FORMAT_PATTERN);
       setSingleSelected(undefined);
       setRangeSelected(undefined);
     } catch (e) {
@@ -804,13 +903,92 @@ export default function App() {
                 persistSettings({ dateFormat: v }, true);
               }}
             >
-              <option value="YYYY-MMM-DD">YYYY – MMM – DD (2026 – Sep – 30)</option>
-              <option value="YYYY-MMM">YYYY – MMM (2026 – Sep)</option>
-              <option value="YYYY-MM-DD">YYYY-MM-DD (2026-09-30)</option>
+              <optgroup label="Built-in">
+                {BUILT_IN_FORMATS.map((f) => (
+                  <option key={f.pattern} value={f.pattern}>{f.label}</option>
+                ))}
+              </optgroup>
+              {customFormats.length > 0 && (
+                <optgroup label="Custom (shared across cards)">
+                  {customFormats.map((f) => (
+                    <option key={f.id} value={f.pattern}>
+                      {f.label || f.pattern} — {(() => {
+                        try { return format(new Date(), f.pattern); } catch { return 'invalid'; }
+                      })()}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </select>
             <p className="settings-hint">
               Preview: {formatDateLabel(new Date(), dateFormat)}
             </p>
+
+            {customFormats.length > 0 && (
+              <div className="settings-hint" style={{ marginTop: 8 }}>
+                <strong>Custom formats:</strong>
+                <ul style={{ margin: '4px 0 8px 16px', padding: 0 }}>
+                  {customFormats.map((f) => (
+                    <li key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <code style={{ flex: 1 }}>{f.label ? `${f.label} — ` : ''}{f.pattern}</code>
+                      <button
+                        type="button"
+                        onClick={() => deleteCustomFormat(f.id)}
+                        title="Delete this format (affects all cards)"
+                        style={{ padding: '0 6px', fontSize: 11, cursor: 'pointer' }}
+                      >×</button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            <div style={{ marginTop: 8, padding: 8, border: '1px dashed #ccc', borderRadius: 4 }}>
+              <label className="settings-sublabel" style={{ display: 'block', marginBottom: 4 }}>
+                Add custom format
+              </label>
+              <input
+                className="settings-input"
+                type="text"
+                placeholder="date-fns pattern, e.g. yyyy MMMM d"
+                value={newFormatPattern}
+                onChange={(e) => { setNewFormatPattern(e.target.value); setNewFormatError(''); }}
+              />
+              <input
+                className="settings-input"
+                type="text"
+                placeholder="Label (optional, shown in dropdown)"
+                value={newFormatLabel}
+                onChange={(e) => setNewFormatLabel(e.target.value)}
+                style={{ marginTop: 4 }}
+              />
+              {newFormatPattern && !newFormatError && (() => {
+                try {
+                  return (
+                    <p className="settings-hint" style={{ marginTop: 4 }}>
+                      Preview: <code>{format(new Date(), newFormatPattern)}</code>
+                    </p>
+                  );
+                } catch {
+                  return <p className="settings-hint" style={{ color: '#c0392b' }}>Invalid pattern</p>;
+                }
+              })()}
+              {newFormatError && (
+                <p className="settings-hint" style={{ color: '#c0392b' }}>{newFormatError}</p>
+              )}
+              <button
+                type="button"
+                onClick={addCustomFormat}
+                style={{ marginTop: 6, padding: '4px 10px', cursor: 'pointer' }}
+              >
+                Add + Use
+              </button>
+              <p className="settings-hint" style={{ marginTop: 4, fontSize: 11 }}>
+                Tokens: <code>yyyy</code> year · <code>MM</code>/<code>MMM</code>/<code>MMMM</code> month ·
+                {' '}<code>dd</code>/<code>d</code> day · <code>EEEE</code> weekday. Literals inside single quotes,
+                {' '}e.g. <code>yyyy ' – ' MMM ' – ' dd</code>.
+              </p>
+            </div>
           </div>
 
           {!filterColumn && (
