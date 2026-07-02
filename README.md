@@ -10,10 +10,20 @@ column refresh automatically. No variable wiring required.
 > accept a filtered date set — a beast mode referencing a page variable
 > is NOT driven by this brick (v1.3 drops the variable path entirely).
 
-- **Calendar view** — months side-by-side; non-data days greyed out
-- **List view** — descending dropdown of available dates
-- **Persistence** — selected variable + last picked date stored in an
-  AppDB collection (`date-selector-settings`)
+- **Dropdown default** — descending list of dates present in the bound dataset
+- **Calendar option** — admin can switch view; only in-dataset days clickable
+- **Editable date-format list** (v1.3.1) — admins add custom date-fns
+  patterns via the gear; entries persist globally so every future
+  card instance pulls from the same shared list
+- **Per-card persistence** — filter column, operator, view mode, and
+  chosen date format stored per Domo card id in AppDB collection
+  `date-selector-settings`
+
+## Current release
+
+**v1.3.1** — see [`docs/SETUP.md`](docs/SETUP.md) for full admin
+walkthrough (add card → bind dataset → configure filter → pick or add
+date format).
 
 ## Documentation
 

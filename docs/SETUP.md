@@ -3,7 +3,11 @@
 Drop-in date control that replaces Domo's native date filter and emits a
 **page filter** (`domo.filterContainer`) on the picked column. Cards on
 the same page filtered by that column refresh automatically. No App
-Studio variable wiring required (v1.3 dropped the variable path).
+Studio variable wiring required.
+
+**Current release: v1.3.1** — editable custom date formats persisted
+in a shared collection, so every future card instance pulls from the
+same format list.
 
 ---
 
@@ -25,7 +29,7 @@ Studio variable wiring required (v1.3 dropped the variable path).
 
 - App design **Date Selector** already exists in your tenant (id
   `4896fd53-0232-42d3-b31b-7be12b50e6ed`). If not, upload
-  `date-selector-1.3.0.zip` via Asset Library → Apps → ⋮ → Upload Design.
+  `date-selector-1.3.1.zip` via Asset Library → Apps → ⋮ → Upload Design.
 - Dataset bound with a date-typed column (literal column name; admin
   picks it in the gear panel).
 - At least one downstream card on the page that filters by that same
@@ -35,83 +39,183 @@ Studio variable wiring required (v1.3 dropped the variable path).
 
 ## 1. Add the card to an App Studio page
 
-1. App Studio → open the page (Edit mode).
-2. **+ Card** → **Custom App** → search **Date Selector**.
-3. Place the card; minimum useful size 2×1.
-4. **Domo will prompt for the dataset** as part of adding the card —
-   the right-hand panel shows a dataset picker.
-   - Pick the dataset whose dates you want surfaced. Required column:
-     `Date` (literal name, case-sensitive).
-   - This wires up the brick's `sampleData` alias. You won't see the
-     word "bind" — it just looks like picking a data source. That's it.
-5. If a second alias `variablesDataSet` is shown, **skip it** (leave
-   unbound). Auto-detect handles single-variable cases without it. It's
-   only useful for advanced multi-app registries.
+![Admin default view — dropdown + gear only](img/v1.3-01-admin-default.png)
+
+1. **Open the App Studio page** you want to filter (Edit mode).
+2. Click **+ Card** → **Custom App** → search **Date Selector** →
+   select it.
+3. **Place the card** on the canvas. Minimum useful size **2×1**.
+   Larger sizes are fine — the dropdown centres regardless of card
+   dimensions.
+4. Save the page. The card renders "⚠ No filter column configured —
+   open settings" until step 3 below.
+
+> **Second-brick warning:** you can add multiple Date Selector cards to
+> the same page — each keeps independent settings (per-card `cardId`
+> discriminator in AppDB). Custom date-format entries are shared across
+> all card instances on this design.
 
 ---
 
-## 2. Pick the filter column (admin, one-time)
+## 2. Bind the dataset at the card level
 
-> **Who sees the gear?** Only users with a Domo system role of `Admin` or
-> `Privileged`, OR the owner of the App Studio app, can see the gear icon
-> in v1.2+. End users see only the dropdown/calendar. If the Code Engine
-> package `Domo AppStudio Pages` is not provisioned on your instance, the
-> gear stays visible to everyone (fail-open so config is never locked).
+The brick reads dates and column schema from a single bound dataset
+(alias `sampleData` in the manifest).
 
-1. Click the brick's **gear ⚙** (top-right of the card). Admin-only.
-2. Settings panel opens. The first section is **Filter Configuration**.
+1. In App Studio, click the Date Selector card to select it.
+2. Open the right-hand **Data** panel (or hover the card → **Change
+   dataset**).
+3. Pick the dataset whose date column your downstream cards filter by.
+   - The dataset must have at least one **date-typed column** (the
+     column name is arbitrary; you'll pick it in step 3).
+   - No other alias is required. Earlier versions had a
+     `variablesDataSet` slot — that was removed in v1.3.
+4. Save. The brick immediately re-fetches the schema and populates the
+   Filter column dropdown in the gear panel.
 
-![Settings panel — gear opens this view](img/02-settings-panel.png)
-
-3. **Filter column** — dropdown listing every column of the bound
-   dataset (discovered via `SELECT * ... LIMIT 1` and cached 30 min).
-   Pick the date column your downstream cards filter by.
-4. **Filter operator** — default `EQUALS` for a single-day filter.
-   Other options: `BETWEEN` (range), `LESS_THAN_EQUALS_TO`
-   (cumulative-through), `GREAT_THAN_EQUALS_TO` (from-date).
-5. **Data type** — default `DATE`. Change to `STRING` or `NUMERIC` only
-   if the column is not date-typed.
-6. Selection auto-saves to the brick's AppDB collection
-   (`date-selector-settings`). Panel can be closed.
-7. Verify the status line at the bottom:
-   `Admin · Card <id> · filter=<column> <op>`
-
-> **Persistence:** in v1.2+, every card-instance keeps its own
-> configuration (variable name, view mode, date format) keyed by the
-> Domo card id. Two cards on the same page can drive different variables
-> or display different date formats without overwriting each other.
-> Refresh the page, sign out, switch devices — config follows the card.
+> **Dataset scope:** each Date Selector card can bind a different
+> dataset. Two cards on the same page can drive filters on entirely
+> different datasets simultaneously — for example one card for
+> `sales_daily.Date` and another for `traffic.EventDate`.
 
 ---
 
-## 3. End-user behaviour
+## 3. Configure the filter (admin, one-time)
 
-- **Calendar view (default)** — months side-by-side; only in-dataset days
-  are clickable. Headers render as `2026 – Sep` (YYYY – MMM). Picked
-  date highlighted; selected label shown in the toolbar.
+> **Who sees the gear?** Only users with a Domo system role of `Admin`
+> or `Privileged`, OR the owner of the App Studio app. End users see
+> only the dropdown. If the Code Engine package `Domo AppStudio Pages`
+> is not provisioned on your instance, the gear stays visible to
+> everyone (fail-open — config is never locked out).
 
-  ![Calendar with a date selected](img/03-calendar-selected.png)
+1. Click the brick's **gear ⚙** (top-right of the card).
+2. **Filter Configuration** panel opens.
 
-- **List view (≡ icon)** — dropdown listing every available date,
-  descending (latest first), formatted `YYYY – MMM – DD`.
+![Settings panel — gear opens this view](img/v1.3-02-settings-panel.png)
 
-  ![List view — descending dropdown](img/04-list-view.png)
+### 3a. Pick the filter column
 
-- Picking a date emits a `filterContainer` page filter on the configured
-  column with the ISO date value. Filtered cards re-render.
+- **Filter column** dropdown lists every column of the bound dataset
+  (discovered via `SELECT * FROM <alias> LIMIT 1`, cached 30 min in
+  `localStorage`).
+- Pick **the same column** that your downstream cards filter by. For
+  most cases this is the dataset's date column (e.g. `Date`,
+  `TransactionDate`, `EventDate`).
+- The column name is case-sensitive. If your downstream card filters
+  by `Date` but you pick `date` here, the filter payload will not
+  match.
+
+### 3b. Pick the filter operator
+
+| Operator | When to use |
+|---|---|
+| `EQUALS` | Single-day filter. Downstream shows only rows exactly on the picked date. Default. |
+| `LESS_THAN_EQUALS_TO` | "Through" date — MTD / YTD / cumulative-through. Downstream shows every row up to and including the picked date. |
+| `GREAT_THAN_EQUALS_TO` | "From" date — everything on or after the picked date. |
+| `BETWEEN` | Range mode (Between UI currently hidden — code path preserved). |
+
+### 3c. Data type
+
+Default `DATE`. Only change to `STRING` or `NUMERIC` if the column
+is not date-typed (unusual for this brick's use case).
+
+### 3d. Save
+
+Every control auto-saves to the card's AppDB config doc. Status line
+at the bottom of the panel confirms:
+
+```
+Admin · Card <8-char-id> · filter=<column> <operator>
+```
+
+Close the gear. The dropdown is now live — pick a date and downstream
+cards refresh.
 
 ---
 
-## 4. Re-configure or clear
+## 4. Pick a date format (admin, one-time)
 
-- **Change the filter column / operator:** gear ⚙ → pick a different
-  value → auto-saves.
-- **Wipe configuration:** gear ⚙ → **Reset**. Both the config doc and
-  any persisted picked date are deleted from AppDB.
+Still in the gear panel, scroll to **Date format**.
+
+- **Built-in** presets: `YYYY – MMM – DD`, `YYYY – MMM`, `YYYY-MM-DD`.
+- **Custom** entries: use the "Add custom format" section at the
+  bottom of the Date format group.
+
+### Adding a custom format
+
+1. Type a **date-fns pattern** in the first input. Common tokens:
+   - `yyyy` — 4-digit year
+   - `MM` / `MMM` / `MMMM` — month (`07` / `Jul` / `July`)
+   - `dd` / `d` — day of month (`02` / `2`)
+   - `EEEE` — weekday (`Thursday`)
+   - Literal characters inside single quotes, e.g.
+     `yyyy ' – ' MMM ' – ' dd` renders `2026 – Jul – 02`.
+2. Optional: type a **label** shown in the dropdown (falls back to the
+   pattern itself if blank).
+3. Live preview renders as you type. Invalid patterns show a red
+   error.
+4. Click **Add + Use**. The new pattern is saved to the collection as
+   a `type:'format'` doc (NO `cardId` — shared globally across every
+   card instance on this design) and auto-selected for the current
+   card.
+
+### Deleting a custom format
+
+Click the × next to any custom entry. Removes the global doc. Any
+card currently using that pattern falls back to the default preset.
 
 ---
 
-## 5. Sandbox / security notes
+## 5. Verify
+
+![End-user view — dropdown only](img/v1.3-03-end-user.png)
+
+1. Refresh the App Studio page.
+2. As a non-admin user (or with dev role toggle off in local dev):
+   confirm only the dropdown renders — no gear, no toolbar.
+3. Pick a date. Downstream cards on the page filtered by the same
+   column refresh.
+4. In DevTools Network / iframe protocol tab, confirm a
+   `filterContainer` message with payload
+   `[{column, operator, values, dataType}]`.
+5. Refresh the page. The brick rehydrates the last picked date and
+   re-emits the filter automatically.
+
+> **Persistence:** every card-instance keeps its own config (filter
+> column, operator, view mode, date format) keyed by the Domo card id.
+> Two cards on the same page hold independent settings. Custom date
+> formats persist globally so every future card instance pulls the
+> same format list.
+
+---
+
+## 6. End-user behaviour
+
+- Default surface for everyone: a **dropdown** listing every date
+  present in the bound dataset, sorted descending (latest first),
+  formatted per the chosen date format.
+- Non-admin users never see the gear or any toolbar chrome — pure
+  dropdown.
+- Picking a date emits a `filterContainer` page filter on the
+  configured column with the ISO date value. Downstream cards
+  refresh.
+- Admins can flip **Default view** to `Calendar` in the gear if a
+  calendar grid is preferred over the dropdown (calendar shows only
+  in-dataset days as clickable; empty days greyed out).
+
+---
+
+## 7. Re-configure or clear
+
+- **Change filter column / operator / date format:** gear ⚙ → pick a
+  different value → auto-saves.
+- **Wipe card config:** gear ⚙ → **Reset**. Deletes the card's config
+  and state docs from AppDB. Global custom date formats are NOT
+  affected (delete those individually via the × next to each entry).
+
+---
+
+## 8. Sandbox / security notes
 
 - The brick lives inside Domo's standard custom-app iframe sandbox.
 - Filter emission uses Domo's documented `domo.filterContainer` API —
@@ -134,7 +238,7 @@ Studio variable wiring required (v1.3 dropped the variable path).
 
 ---
 
-## What's NOT in this release (v1.3.0)
+## What's NOT in this release (v1.3.1)
 
 - **Between (date range) mode** — code paths preserved; UI hidden pending
   stakeholder use-case confirmation. Flip `HIDE_BETWEEN` to re-enable.
