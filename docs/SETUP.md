@@ -37,46 +37,81 @@ same format list.
 
 ---
 
-## 1. Add the card to an App Studio page
+## 1. Create the card + wire the dataset
 
-![Admin default view — dropdown + gear only](img/v1.3-01-admin-default.png)
+Card creation happens in Domo's **New Custom App** wiring screen —
+BEFORE the card is added to any App Studio page. This is where the
+dataset alias and the AppDB collection get bound to this specific
+card instance.
 
-1. **Open the App Studio page** you want to filter (Edit mode).
-2. Click **+ Card** → **Custom App** → search **Date Selector** →
-   select it.
-3. **Place the card** on the canvas. Minimum useful size **2×1**.
-   Larger sizes are fine — the dropdown centres regardless of card
-   dimensions.
-4. Save the page. The card renders "⚠ No filter column configured —
-   open settings" until step 3 below.
+1. From your Domo instance, create a new card from the **Date
+   Selector** design (Asset Library → the design → **Add to Domo** /
+   **Create Card**). The New Custom App wiring screen opens with the
+   preview at the top and a data-mapping panel at the bottom.
+2. The left rail shows three wiring tabs — dataset, collection, and
+   packages (Code Engine). Work top-down.
 
-> **Second-brick warning:** you can add multiple Date Selector cards to
-> the same page — each keeps independent settings (per-card `cardId`
-> discriminator in AppDB). Custom date-format entries are shared across
-> all card instances on this design.
+### 1a. Wire the dataset (alias `sampleData`)
+
+![Wiring the sampleData alias](img/v1.3-wiring-01-dataset.png)
+
+- **Left rail** → dataset icon (top). The alias `sampleData` (from
+  the manifest) is preselected.
+- Click **SELECT DATASET** and pick the dataset whose date column
+  your downstream cards filter by. Any dataset with at least one
+  date-typed column works — the actual column name is arbitrary
+  (you'll pick it in step 3).
+- The column preview to the right confirms the bound schema
+  (`Date`, `Product1`, `Category1`, …). The brick reads this same
+  schema at runtime to populate the Filter column dropdown.
+
+### 1b. Wire the collection (`date-selector-settings`)
+
+![Wiring the date-selector-settings collection](img/v1.3-wiring-02-collection.png)
+
+- **Left rail** → collection icon (middle).
+- Leave **"Automatically create un-configured collections with app
+  defaults"** turned ON (default). Domo provisions the collection
+  the first time the card runs.
+- If the toggle is off, click **SELECT COLLECTION** and either pick
+  an existing `date-selector-settings` collection or let the app
+  create one.
+- No manual schema entry — the manifest declares every column
+  (`type`, `cardId`, `mode`, `viewMode`, `dateFormat`,
+  `filterColumn`, `filterOperator`, `filterDataType`, `pattern`,
+  `label`, plus state fields).
+
+### 1c. Packages (Code Engine)
+
+- **Left rail** → third icon (packages). Leave defaults if the
+  `Domo AppStudio Pages` package is already provisioned on your
+  instance (it powers admin/owner gating). If not provisioned, the
+  gear stays visible to everyone (fail-open).
+
+### 1d. Save
+
+Click **SAVE & FINISH** (top right). Card is now created with
+sampleData bound and the collection auto-provisioned.
+
+> **Second-card note:** each new card created from this design gets
+> its own dataset binding + its own `cardId`-scoped config in the
+> shared collection. Two cards can bind different datasets on
+> different pages. Custom date formats (see step 4) are shared
+> globally across every card instance on this design.
 
 ---
 
-## 2. Bind the dataset at the card level
+## 2. Add the card to an App Studio page
 
-The brick reads dates and column schema from a single bound dataset
-(alias `sampleData` in the manifest).
+![Admin default view — dropdown + gear only](img/v1.3-01-admin-default.png)
 
-1. In App Studio, click the Date Selector card to select it.
-2. Open the right-hand **Data** panel (or hover the card → **Change
-   dataset**).
-3. Pick the dataset whose date column your downstream cards filter by.
-   - The dataset must have at least one **date-typed column** (the
-     column name is arbitrary; you'll pick it in step 3).
-   - No other alias is required. Earlier versions had a
-     `variablesDataSet` slot — that was removed in v1.3.
-4. Save. The brick immediately re-fetches the schema and populates the
-   Filter column dropdown in the gear panel.
-
-> **Dataset scope:** each Date Selector card can bind a different
-> dataset. Two cards on the same page can drive filters on entirely
-> different datasets simultaneously — for example one card for
-> `sales_daily.Date` and another for `traffic.EventDate`.
+1. Open the target App Studio page in Edit mode.
+2. **+ Card** → search the card name you just created (or drag from
+   the **My Cards** panel).
+3. **Place** on the canvas. Minimum useful size **2×1**. Larger sizes
+   are fine — the dropdown centres regardless of card dimensions.
+4. Save the page. Card renders "⚠ No filter column configured — open
+   settings" until step 3 below.
 
 ---
 
