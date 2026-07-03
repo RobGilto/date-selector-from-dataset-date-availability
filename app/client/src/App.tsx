@@ -915,21 +915,24 @@ export default function App() {
       if (v.name === name) { fid = v.functionId; break; }
     }
     if (fid == null) fid = variableFidRef.current;
-    if (fid == null || !Number.isFinite(fid)) {
-      console.warn(`[emitVariable] '${name}' not yet detected — skipping variable emit`);
-      return;
+    if (fid != null && Number.isFinite(fid) && variableFidRef.current !== fid) {
+      variableFidRef.current = fid;
     }
-    if (variableFidRef.current !== fid) variableFidRef.current = fid;
     const value = computeVarValue(picked, variableValueModeRef.current, fyStartMonthRef.current);
+    // ryuu v6 Variable interface: { functionId?, name?, value } — either
+    // identifier accepted. Prefer fid when known, fall back to name.
+    const payload: { functionId?: number; name?: string; value: string } = { value };
+    if (fid != null && Number.isFinite(fid)) payload.functionId = fid;
+    else payload.name = name;
     if (IS_LOCAL) {
-      console.log('[DEV] emit variable:', { functionId: fid, value, name, mode: variableValueModeRef.current });
+      console.log('[DEV] emit variable:', { ...payload, mode: variableValueModeRef.current });
       return;
     }
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (domo as any).requestVariablesUpdate(
-        [{ functionId: fid, value }],
-        () => {},
+        [payload],
+        () => console.log(`[emitVariable] ✓ ${name} = ${value}`),
         (err: unknown) => console.error('[emitVariable] update failed', err),
       );
     } catch (e) {
@@ -1142,19 +1145,18 @@ export default function App() {
               Also drive App Studio variable (optional)
             </label>
             {(() => {
-              const dateShaped = (v: DetectedVar) =>
-                (typeof v.value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(String(v.value))) ||
-                (!!v.name && /date|month|day|year|period|till|start|end/i.test(v.name));
-              const dateVars = detected.filter(dateShaped);
-              const otherVars = detected.filter((v) => !dateShaped(v));
+              const namedDetected = detected.filter((d) => !!d.name);
               return (
                 <>
-                  <select
+                  <input
                     className="settings-input"
+                    type="text"
+                    list="variable-name-options"
+                    placeholder="e.g. vMonthStart_test"
                     value={variableName}
                     onChange={(e) => {
-                      const v = e.target.value;
-                      const match = detected.find((d) => d.name === v);
+                      const v = e.target.value.trim();
+                      const match = namedDetected.find((d) => d.name === v);
                       variableNameRef.current = v;
                       variableFidRef.current = match?.functionId ?? null;
                       setVariableName(v);
@@ -1163,34 +1165,20 @@ export default function App() {
                         variableFid: match?.functionId ?? undefined,
                       }, true);
                     }}
-                  >
-                    <option value="">— none (page filter only) —</option>
-                    {dateVars.length > 0 && (
-                      <optgroup label="Date-typed variables">
-                        {dateVars.map((v) => (
-                          <option key={v.functionId} value={v.name || ''}>
-                            {v.name || '(unnamed)'}{typeof v.value === 'string' ? ` — ${v.value}` : ''}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {otherVars.length > 0 && (
-                      <optgroup label="Other variables on this page">
-                        {otherVars.map((v) => (
-                          <option key={v.functionId} value={v.name || ''}>
-                            {v.name || '(unnamed)'}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                  </select>
-                  {detected.length === 0 && (
-                    <p className="settings-hint">
-                      No variables detected yet — variables surface after App
-                      Studio pushes them to this card. Reload the page and
-                      reopen this panel if you expected one.
-                    </p>
-                  )}
+                  />
+                  <datalist id="variable-name-options">
+                    {namedDetected.map((v) => (
+                      <option key={v.functionId} value={v.name}>
+                        {typeof v.value === 'string' ? v.value : ''}
+                      </option>
+                    ))}
+                  </datalist>
+                  <p className="settings-hint">
+                    Type the exact variable name (e.g. <code>vMonthStart_test</code>).
+                    {namedDetected.length > 0
+                      ? ` Autocomplete lists ${namedDetected.length} detected variable${namedDetected.length === 1 ? '' : 's'}.`
+                      : ' No auto-detected variables yet — App Studio does not push variables to custom-app cards, so type the name manually. Brick will resolve it by name at emit time (ryuu v6 supports name-based updates).'}
+                  </p>
                   {variableName && (
                     <>
                       <label
