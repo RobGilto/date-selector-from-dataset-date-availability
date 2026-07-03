@@ -86,6 +86,16 @@ interface ConfigDoc {
   filterDataType?: FilterDataType;
   /** 1-based month of financial-year start. Default 7 (Jul, Australian FY). */
   fyStartMonth?: number;
+  /** v1.3.3: optional App Studio variable to also drive on date pick.
+   *  Name is the source of truth; functionId cached for callback stability. */
+  variableName?: string;
+  variableFid?: number;
+}
+
+interface DetectedVar {
+  functionId: number;
+  name?: string;
+  value?: unknown;
 }
 
 interface StateDoc {
@@ -274,6 +284,47 @@ async function fetchLocalDates(): Promise<string[]> {
 // ── Echo guard ──────────────────────────────────────────────────────────────
 let isFiltersEmittedFromApp = false;
 
+// ── Live variable detection (v1.3.3) ────────────────────────────────────────
+// Populated by domo.onVariablesUpdated. Keyed by functionId. Feeds the gear
+// panel's "Also drive App Studio variable" dropdown so admins pick by NAME
+// only — functionIds never surface in UI.
+const detectedVars = new Map<number, DetectedVar>();
+const detectedVarsListeners = new Set<() => void>();
+function notifyDetected() {
+  detectedVarsListeners.forEach((fn) => { try { fn(); } catch { /* ignore */ } });
+}
+let variablesListenerRegistered = false;
+function registerVariablesListener() {
+  if (variablesListenerRegistered) return;
+  variablesListenerRegistered = true;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (domo as any).onVariablesUpdated((vars: any) => {
+      const ingest = (fid: unknown, name: unknown, value: unknown) => {
+        const n = typeof fid === 'number' ? fid : Number(fid);
+        if (!Number.isFinite(n)) return;
+        detectedVars.set(n, {
+          functionId: n,
+          name: typeof name === 'string' ? name : undefined,
+          value,
+        });
+      };
+      if (Array.isArray(vars)) {
+        vars.forEach((v) => ingest(v?.functionId, v?.name, v?.value));
+      } else if (vars && typeof vars === 'object') {
+        Object.entries(vars).forEach(([k, entry]) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const e = entry as any;
+          ingest(k, e?.name, e?.parsedExpression?.value ?? e?.value);
+        });
+      }
+      notifyDetected();
+    });
+  } catch (e) {
+    console.warn('[registerVariablesListener]', e);
+  }
+}
+
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const GearIcon = () => (
   <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
@@ -310,6 +361,12 @@ export default function App() {
   const filterDataTypeRef = useRef<FilterDataType>('DATE');
   const fyStartMonthRef = useRef<number>(7);
 
+  // v1.3.3: variable emission (optional, additive to page filter)
+  const [variableName, setVariableName] = useState<string>('');
+  const [detected, setDetected] = useState<DetectedVar[]>([]);
+  const variableNameRef = useRef<string>('');
+  const variableFidRef = useRef<number | null>(null);
+
   const [dateFormat, setDateFormat] = useState<DateFormat>(DEFAULT_FORMAT_PATTERN);
   const dateFormatRef = useRef<DateFormat>(DEFAULT_FORMAT_PATTERN);
   const viewModeRef = useRef<ViewMode>('list');
@@ -332,6 +389,16 @@ export default function App() {
 
   useEffect(() => {
     resolveRole().then(setRole).catch(() => setRole('user'));
+  }, []);
+
+  // v1.3.3: subscribe to live variable detection so gear panel dropdown
+  // lists names admins can pick without knowing functionIds.
+  useEffect(() => {
+    if (!IS_LOCAL) registerVariablesListener();
+    const onChange = () => setDetected(Array.from(detectedVars.values()));
+    detectedVarsListeners.add(onChange);
+    onChange();
+    return () => { detectedVarsListeners.delete(onChange); };
   }, []);
 
   useEffect(() => {
@@ -426,6 +493,11 @@ export default function App() {
         setFilterColumn(fc);
         setFilterOperator(fo);
         setFilterDataType(fdt);
+        const vn = c.variableName ?? '';
+        const vfid = c.variableFid ?? null;
+        variableNameRef.current = vn;
+        variableFidRef.current = vfid;
+        setVariableName(vn);
       }
 
       if (stateDoc) {
@@ -512,6 +584,8 @@ export default function App() {
         filterOperator: filterOperatorRef.current,
         filterDataType: filterDataTypeRef.current,
         fyStartMonth: fyStartMonthRef.current,
+        variableName: variableNameRef.current || undefined,
+        variableFid: variableFidRef.current ?? undefined,
         ...patch,
         type: 'config',
         cardId: CURRENT_CARD_ID,
@@ -742,6 +816,38 @@ export default function App() {
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
 
+  function emitVariable(iso: string) {
+    const name = variableNameRef.current;
+    if (!name) return;
+    // Resolve functionId: prefer live detection (survives rebuild), fall back
+    // to stored fid so first-emit-before-detection still works.
+    let fid: number | null = null;
+    for (const v of detectedVars.values()) {
+      if (v.name === name) { fid = v.functionId; break; }
+    }
+    if (fid == null) fid = variableFidRef.current;
+    if (fid == null || !Number.isFinite(fid)) {
+      console.warn(`[emitVariable] '${name}' not yet detected — skipping variable emit`);
+      return;
+    }
+    // Keep the cached fid fresh so persistSettings writes the latest.
+    if (variableFidRef.current !== fid) variableFidRef.current = fid;
+    if (IS_LOCAL) {
+      console.log('[DEV] emit variable:', { functionId: fid, value: iso, name });
+      return;
+    }
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (domo as any).requestVariablesUpdate(
+        [{ functionId: fid, value: iso }],
+        () => {},
+        (err: unknown) => console.error('[emitVariable] update failed', err),
+      );
+    } catch (e) {
+      console.error('[emitVariable]', e);
+    }
+  }
+
   const handleSingleSelect = useCallback(
     (date: Date | undefined) => {
       if (!date) return;
@@ -749,6 +855,9 @@ export default function App() {
       if (!availableDates.has(iso)) return;
       setSingleSelected(date);
       persistState({ singleDate: iso });
+      // Variable emit runs regardless of filter-column presence — customer's
+      // beast modes may rely on the variable even without a page filter set.
+      emitVariable(iso);
       if (!filterColumnRef.current) return;
       const op = filterOperatorRef.current;
       // Computed-range ops synthesise a BETWEEN payload with a period-start value.
@@ -938,6 +1047,73 @@ export default function App() {
               values:["{samplePreviewDate}"], dataType:"{filterDataType}"{'}'}]
             </code>
           </p>
+
+          <div className="settings-group">
+            <label className="settings-sublabel">
+              Also drive App Studio variable (optional)
+            </label>
+            {(() => {
+              const dateShaped = (v: DetectedVar) =>
+                (typeof v.value === 'string' && /^\d{4}-\d{2}-\d{2}/.test(String(v.value))) ||
+                (!!v.name && /date|month|day|year|period|till|start|end/i.test(v.name));
+              const dateVars = detected.filter(dateShaped);
+              const otherVars = detected.filter((v) => !dateShaped(v));
+              return (
+                <>
+                  <select
+                    className="settings-input"
+                    value={variableName}
+                    onChange={(e) => {
+                      const v = e.target.value;
+                      const match = detected.find((d) => d.name === v);
+                      variableNameRef.current = v;
+                      variableFidRef.current = match?.functionId ?? null;
+                      setVariableName(v);
+                      persistSettings({
+                        variableName: v || undefined,
+                        variableFid: match?.functionId ?? undefined,
+                      }, true);
+                    }}
+                  >
+                    <option value="">— none (page filter only) —</option>
+                    {dateVars.length > 0 && (
+                      <optgroup label="Date-typed variables">
+                        {dateVars.map((v) => (
+                          <option key={v.functionId} value={v.name || ''}>
+                            {v.name || '(unnamed)'}{typeof v.value === 'string' ? ` — ${v.value}` : ''}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {otherVars.length > 0 && (
+                      <optgroup label="Other variables on this page">
+                        {otherVars.map((v) => (
+                          <option key={v.functionId} value={v.name || ''}>
+                            {v.name || '(unnamed)'}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </select>
+                  {detected.length === 0 && (
+                    <p className="settings-hint">
+                      No variables detected yet — variables surface after App
+                      Studio pushes them to this card. Reload the page and
+                      reopen this panel if you expected one.
+                    </p>
+                  )}
+                  {variableName && (
+                    <p className="settings-hint">
+                      On date pick, brick will push the picked ISO date to
+                      <code> {variableName}</code> in addition to emitting the
+                      page filter above. Beast modes referencing this variable
+                      will keep working.
+                    </p>
+                  )}
+                </>
+              );
+            })()}
+          </div>
 
           <div className="settings-group">
             <label className="settings-sublabel">Default view</label>
