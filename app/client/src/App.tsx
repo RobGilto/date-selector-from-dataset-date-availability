@@ -49,11 +49,30 @@ function normalizeFormatPattern(stored: string | undefined): string {
   if (!stored) return DEFAULT_FORMAT_PATTERN;
   return LEGACY_FORMAT_MAP[stored] ?? stored;
 }
+// Direct emit ops map 1:1 to Domo FilterOperatorsNumeric.
+// Computed-range ops (MTD/CYTD/FYTD) synthesise a BETWEEN payload with a
+// computed start-of-period value; the picked date is the end.
 type FilterOperator =
   | 'EQUALS'
   | 'BETWEEN'
   | 'LESS_THAN_EQUALS_TO'
-  | 'GREAT_THAN_EQUALS_TO';
+  | 'GREAT_THAN_EQUALS_TO'
+  | 'MTD'
+  | 'CYTD'
+  | 'FYTD';
+
+function computedStartForOp(picked: Date, op: FilterOperator, fyStartMonth: number): Date | null {
+  if (op === 'MTD') return new Date(picked.getFullYear(), picked.getMonth(), 1);
+  if (op === 'CYTD') return new Date(picked.getFullYear(), 0, 1);
+  if (op === 'FYTD') {
+    // fyStartMonth is 1-based (1 = Jan, 7 = Jul AU).
+    const m0 = Math.max(1, Math.min(12, fyStartMonth)) - 1;
+    const pickedM = picked.getMonth();
+    const y = pickedM >= m0 ? picked.getFullYear() : picked.getFullYear() - 1;
+    return new Date(y, m0, 1);
+  }
+  return null;
+}
 type FilterDataType = 'DATE' | 'STRING' | 'NUMERIC';
 
 interface ConfigDoc {
@@ -65,6 +84,8 @@ interface ConfigDoc {
   filterColumn?: string;
   filterOperator?: FilterOperator;
   filterDataType?: FilterDataType;
+  /** 1-based month of financial-year start. Default 7 (Jul, Australian FY). */
+  fyStartMonth?: number;
 }
 
 interface StateDoc {
@@ -283,9 +304,11 @@ export default function App() {
   const [filterColumn, setFilterColumn] = useState<string>('');
   const [filterOperator, setFilterOperator] = useState<FilterOperator>('EQUALS');
   const [filterDataType, setFilterDataType] = useState<FilterDataType>('DATE');
+  const [fyStartMonth, setFyStartMonth] = useState<number>(7);
   const filterColumnRef = useRef<string>('');
   const filterOperatorRef = useRef<FilterOperator>('EQUALS');
   const filterDataTypeRef = useRef<FilterDataType>('DATE');
+  const fyStartMonthRef = useRef<number>(7);
 
   const [dateFormat, setDateFormat] = useState<DateFormat>(DEFAULT_FORMAT_PATTERN);
   const dateFormatRef = useRef<DateFormat>(DEFAULT_FORMAT_PATTERN);
@@ -388,12 +411,15 @@ export default function App() {
         const fc = c.filterColumn ?? '';
         const fo: FilterOperator = c.filterOperator ?? 'EQUALS';
         const fdt: FilterDataType = c.filterDataType ?? 'DATE';
+        const fym: number = c.fyStartMonth ?? 7;
         selectionModeRef.current = mode;
         viewModeRef.current = vm;
         dateFormatRef.current = df;
         filterColumnRef.current = fc;
         filterOperatorRef.current = fo;
         filterDataTypeRef.current = fdt;
+        fyStartMonthRef.current = fym;
+        setFyStartMonth(fym);
         setSelectionMode(mode);
         setViewMode(vm);
         setDateFormat(df);
@@ -452,6 +478,19 @@ export default function App() {
   function rehydrateFilter(s: StateDoc) {
     if (!filterColumnRef.current) return;
     if (selectionModeRef.current === 'single' && s.singleDate) {
+      const op = filterOperatorRef.current;
+      const computedStart = computedStartForOp(
+        isoToDate(s.singleDate),
+        op,
+        fyStartMonthRef.current,
+      );
+      if (computedStart) {
+        const prev = op;
+        filterOperatorRef.current = 'BETWEEN';
+        emitFilter(buildFilterPayload([toISO(computedStart), s.singleDate]));
+        filterOperatorRef.current = prev;
+        return;
+      }
       emitFilter(buildFilterPayload([s.singleDate]));
     } else if (selectionModeRef.current === 'between' && s.rangeStart) {
       const from = s.rangeStart;
@@ -472,6 +511,7 @@ export default function App() {
         filterColumn: filterColumnRef.current || undefined,
         filterOperator: filterOperatorRef.current,
         filterDataType: filterDataTypeRef.current,
+        fyStartMonth: fyStartMonthRef.current,
         ...patch,
         type: 'config',
         cardId: CURRENT_CARD_ID,
@@ -710,8 +750,18 @@ export default function App() {
       setSingleSelected(date);
       persistState({ singleDate: iso });
       if (!filterColumnRef.current) return;
-      // Force single-value operator (avoid BETWEEN which needs two values).
       const op = filterOperatorRef.current;
+      // Computed-range ops synthesise a BETWEEN payload with a period-start value.
+      const computedStart = computedStartForOp(date, op, fyStartMonthRef.current);
+      if (computedStart) {
+        const startIso = toISO(computedStart);
+        const prev = op;
+        filterOperatorRef.current = 'BETWEEN';
+        emitFilter(buildFilterPayload([startIso, iso]));
+        filterOperatorRef.current = prev;
+        return;
+      }
+      // Direct-emit ops. Force EQUALS if user picked BETWEEN with a single value.
       if (op === 'BETWEEN') filterOperatorRef.current = 'EQUALS';
       emitFilter(buildFilterPayload([iso]));
       filterOperatorRef.current = op;
@@ -824,12 +874,44 @@ export default function App() {
                 persistSettings({ filterOperator: v }, true);
               }}
             >
-              <option value="EQUALS">EQUALS (single date)</option>
-              <option value="LESS_THAN_EQUALS_TO">LESS_THAN_EQUALS_TO (through date)</option>
-              <option value="GREAT_THAN_EQUALS_TO">GREAT_THAN_EQUALS_TO (from date)</option>
-              <option value="BETWEEN">BETWEEN (range)</option>
+              <optgroup label="Direct">
+                <option value="EQUALS">EQUALS (single date)</option>
+                <option value="LESS_THAN_EQUALS_TO">LESS_THAN_EQUALS_TO (through date)</option>
+                <option value="GREAT_THAN_EQUALS_TO">GREAT_THAN_EQUALS_TO (from date)</option>
+                <option value="BETWEEN">BETWEEN (range)</option>
+              </optgroup>
+              <optgroup label="Computed range (auto-BETWEEN)">
+                <option value="MTD">MTD — Month to date</option>
+                <option value="CYTD">CYTD — Calendar year to date</option>
+                <option value="FYTD">FYTD — Financial year to date</option>
+              </optgroup>
             </select>
+            <p className="settings-hint">
+              Computed ranges emit <code>BETWEEN [period-start, picked]</code>{' '}
+              so downstream cards see the full period without beast-mode rework.
+            </p>
           </div>
+
+          {filterOperator === 'FYTD' && (
+            <div className="settings-group">
+              <label className="settings-sublabel">Financial year starts</label>
+              <select
+                className="settings-input"
+                value={fyStartMonth}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!Number.isFinite(v)) return;
+                  setFyStartMonth(v);
+                  fyStartMonthRef.current = v;
+                  persistSettings({ fyStartMonth: v }, true);
+                }}
+              >
+                {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => (
+                  <option key={m} value={i + 1}>{i + 1} — {m} 1{i + 1 === 7 ? ' (Australian FY)' : ''}{i === 0 ? ' (Calendar year)' : ''}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div className="settings-group">
             <label className="settings-sublabel">Data type</label>
