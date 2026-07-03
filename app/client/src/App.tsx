@@ -312,6 +312,13 @@ async function fetchLocalDates(): Promise<string[]> {
 // ── Echo guard ──────────────────────────────────────────────────────────────
 let isFiltersEmittedFromApp = false;
 
+// v1.3.8 diagnostic: known NAB variable name→functionId (from HAR). Used only
+// as a last-resort fallback when the fid can't be discovered or pasted.
+const KNOWN_VARIABLE_IDS: Record<string, number> = {
+  vMonthStart_test: 132051,
+  vMonthStart: 130340,
+};
+
 // ── Live variable detection (v1.3.3) ────────────────────────────────────────
 // Populated by domo.onVariablesUpdated. Keyed by functionId. Feeds the gear
 // panel's "Also drive App Studio variable" dropdown so admins pick by NAME
@@ -917,10 +924,18 @@ export default function App() {
       if (v.name === name) { fid = v.functionId; break; }
     }
     if (fid == null) fid = variableFidRef.current;
+    // v1.3.8 diagnostic: last-resort name→fid lookup for known variables.
+    // Custom-app iframes can't reach the variable-controls API and App Studio
+    // never pushes variable state to the card, so auto-discovery of the fid
+    // isn't possible. This proves whether fid-based override applies at all.
+    if (fid == null && KNOWN_VARIABLE_IDS[name] != null) fid = KNOWN_VARIABLE_IDS[name];
     if (fid != null && Number.isFinite(fid) && variableFidRef.current !== fid) {
       variableFidRef.current = fid;
     }
     const value = computeVarValue(picked, variableValueModeRef.current, fyStartMonthRef.current);
+    // DATE variables take an ISO 'YYYY-MM-DD' string. Beast modes compare
+    // `Date` = vMonthStart_test against the raw date, so the value must be the
+    // ISO date, not epoch millis.
     // ryuu v6 Variable interface: { functionId?, name?, value } — either
     // identifier accepted. Prefer fid when known, fall back to name.
     const payload: { functionId?: number; name?: string; value: string } = { value };
