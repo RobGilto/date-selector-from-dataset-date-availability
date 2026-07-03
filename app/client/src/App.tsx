@@ -445,6 +445,7 @@ export default function App() {
 
   // v1.3.3: variable emission (optional, additive to page filter)
   const [variableName, setVariableName] = useState<string>('');
+  const [variableFid, setVariableFid] = useState<number | null>(null);
   const [detected, setDetected] = useState<DetectedVar[]>([]);
   const [variableValueMode, setVariableValueMode] = useState<VarValueMode>('picked');
   const variableNameRef = useRef<string>('');
@@ -587,6 +588,7 @@ export default function App() {
         variableFidRef.current = vfid;
         variableValueModeRef.current = vvm;
         setVariableName(vn);
+        setVariableFid(vfid);
         setVariableValueMode(vvm);
       }
 
@@ -929,11 +931,13 @@ export default function App() {
       return;
     }
     try {
+      const via = payload.functionId != null ? `fid=${payload.functionId}` : `name=${name}`;
+      console.log(`[emitVariable] sending ${via} value=${value}`);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (domo as any).requestVariablesUpdate(
         [payload],
-        () => console.log(`[emitVariable] ✓ ${name} = ${value}`),
-        (err: unknown) => console.error('[emitVariable] update failed', err),
+        () => console.log(`[emitVariable] ✓ ack (${via}) = ${value}`),
+        (reply: unknown) => console.log('[emitVariable] ← reply:', JSON.stringify(reply)),
       );
     } catch (e) {
       console.error('[emitVariable]', e);
@@ -1158,11 +1162,15 @@ export default function App() {
                       const v = e.target.value.trim();
                       const match = namedDetected.find((d) => d.name === v);
                       variableNameRef.current = v;
-                      variableFidRef.current = match?.functionId ?? null;
+                      // Only overwrite fid from a detection match; keep a
+                      // manually-pasted fid otherwise.
+                      const nextFid = match?.functionId ?? variableFidRef.current ?? null;
+                      variableFidRef.current = nextFid;
                       setVariableName(v);
+                      setVariableFid(nextFid);
                       persistSettings({
                         variableName: v || undefined,
-                        variableFid: match?.functionId ?? undefined,
+                        variableFid: nextFid ?? undefined,
                       }, true);
                     }}
                   />
@@ -1177,10 +1185,35 @@ export default function App() {
                     Type the exact variable name (e.g. <code>vMonthStart_test</code>).
                     {namedDetected.length > 0
                       ? ` Autocomplete lists ${namedDetected.length} detected variable${namedDetected.length === 1 ? '' : 's'}.`
-                      : ' No auto-detected variables yet — App Studio does not push variables to custom-app cards, so type the name manually. Brick will resolve it by name at emit time (ryuu v6 supports name-based updates).'}
+                      : ' No auto-detected variables yet — App Studio does not push variables to custom-app cards, so type the name manually.'}
                   </p>
                   {variableName && (
                     <>
+                      <label
+                        className="settings-sublabel"
+                        style={{ display: 'block', marginTop: 8 }}
+                      >
+                        Variable ID (auto-fills if detected; paste once if blank)
+                      </label>
+                      <input
+                        className="settings-input"
+                        type="number"
+                        placeholder="e.g. 132051"
+                        value={variableFid ?? ''}
+                        onChange={(e) => {
+                          const raw = e.target.value.trim();
+                          const n = raw ? parseInt(raw, 10) : null;
+                          const val = n != null && Number.isFinite(n) ? n : null;
+                          variableFidRef.current = val;
+                          setVariableFid(val);
+                          persistSettings({ variableFid: val ?? undefined }, true);
+                        }}
+                      />
+                      <p className="settings-hint">
+                        Domo resolves variables reliably by ID. Find it once via
+                        the variable's URL or ask your Domo admin. Brick pushes
+                        by ID when present, else by name.
+                      </p>
                       <label
                         className="settings-sublabel"
                         style={{ display: 'block', marginTop: 8 }}
