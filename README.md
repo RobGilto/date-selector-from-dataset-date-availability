@@ -1,29 +1,33 @@
 # Date Selector — Domo Custom App
 
 A Domo App Studio custom card that surfaces **only the dates present in
-the bound dataset** and emits a **page filter** on selection via
-`domo.filterContainer`. Cards on the same page that filter by the picked
-column refresh automatically. No variable wiring required.
+the bound dataset** and, on selection, **drives an App Studio variable**
+(primary) and/or **emits a page filter** (optional). Beast-mode cards
+that read the variable — or cards that filter by the picked column —
+refresh automatically.
 
-> **Beast-mode implication:** page filters narrow the rows the beast mode
-> sees. Cumulative logic (MTD, YTD, running totals) MUST be written to
-> accept a filtered date set — a beast mode referencing a page variable
-> is NOT driven by this brick (v1.3 drops the variable path entirely).
+> **⚠ Required for the variable path:** the target variable must have a
+> **page-level Variable Control on the App Studio page**. A custom-app
+> card can only drive a variable the page already exposes via a control —
+> without it, the update is accepted but never reaches the cards. See
+> [`docs/SETUP.md`](docs/SETUP.md) Section 3.
 
-- **Dropdown default** — descending list of dates present in the bound dataset
+- **Variable drive (primary)** — pushes a computed value (picked date,
+  start-of-month, FY-start, …) to a named App Studio variable by name
+- **Page filter (optional)** — `domo.filterContainer` on a dataset column
+- **Dropdown default** — descending list of dates present in the dataset
 - **Calendar option** — admin can switch view; only in-dataset days clickable
-- **Editable date-format list** (v1.3.1) — admins add custom date-fns
-  patterns via the gear; entries persist globally so every future
-  card instance pulls from the same shared list
-- **Per-card persistence** — filter column, operator, view mode, and
-  chosen date format stored per Domo card id in AppDB collection
+- **Editable date-format list** — admins add custom date-fns patterns via
+  the gear; entries persist globally across every card instance
+- **Per-card persistence** — variable, value formula, filter, view mode,
+  and date format stored per Domo card id in AppDB collection
   `date-selector-settings`
 
 ## Current release
 
-**v1.3.1** — see [`docs/SETUP.md`](docs/SETUP.md) for full admin
-walkthrough (add card → bind dataset → configure filter → pick or add
-date format).
+**v1.4.0** — variable-drive primary, page filter optional. See
+[`docs/SETUP.md`](docs/SETUP.md) for the full admin walkthrough (add card
+→ bind dataset → **add page Variable Control** → configure → pick format).
 
 ## Documentation
 
@@ -81,25 +85,33 @@ design is installed.
 > views. Legacy unkeyed docs from pre-v1.2 deployments are still readable
 > as a safety net during the upgrade.
 
-## How page filters flow (v1.3)
+## How variable drive works (v1.4, primary path)
 
-1. **Column discovery** — on mount the brick reads the bound dataset
-   schema via `SELECT * FROM sampleData LIMIT 1` (locally: reads the CSV
-   header). Result cached in `localStorage` for 30 minutes.
-2. **Admin picks column + operator** — gear panel `Filter column` select
-   lists discovered columns; `Filter operator` picks `EQUALS` / `BETWEEN`
-   / `LESS_THAN_EQUALS_TO` / `GREAT_THAN_EQUALS_TO`; `Data type` defaults
-   to `DATE`.
-3. **Date pick → emit** — brick builds
-   `[{column, operator, values, dataType}]` and calls
-   `domo.filterContainer(payload)`. Downstream cards on the same page
-   filtered by that column refresh automatically.
-4. **Echo guard** — an `isFiltersEmittedFromApp` boolean short-circuits
-   the brick's own `onFiltersUpdate` listener so the emit does not loop.
-5. **External round-trip** — when another card / filter sets the same
-   column, the listener hydrates the brick's dropdown to match.
-6. **Rehydrate on reload** — `loadSettings` re-emits the last picked
-   date's payload so downstream cards restore without a manual re-click.
+1. **One-time setup** — a **page-level Variable Control** for the target
+   variable must exist on the App Studio page. This is what registers the
+   variable as driveable on the page; without it the value never reaches
+   the cards.
+2. **Admin picks variable + value formula** — gear panel: variable name
+   (e.g. `vMonthStart_test`) + "Push what value" (picked date /
+   start-of-month / FY-start / …).
+3. **Date pick → drive** — brick computes the value and calls
+   `domo.requestVariablesUpdate([{ name, value }])` with an ISO
+   `YYYY-MM-DD` string. Every Beast Mode referencing the variable
+   recomputes — Monthly, YTD, YoY, etc.
+4. **Rehydrate on reload** — `loadSettings` re-drives the variable from
+   the last picked date so cards restore without a manual re-click.
+
+## How the optional page filter flows
+
+1. **Column discovery** — the brick reads the bound dataset schema via
+   `SELECT * FROM sampleData LIMIT 1` (locally: CSV header), cached 30 min.
+2. **Admin picks column + operator** — under "Page filter (optional)":
+   `Filter column`, `Filter operator` (`EQUALS` / `BETWEEN` /
+   `LESS_THAN_EQUALS_TO` / `GREAT_THAN_EQUALS_TO` / computed `MTD` /
+   `CYTD` / `FYTD`), `Data type`.
+3. **Date pick → emit** — brick calls `domo.filterContainer([{column,
+   operator, values, dataType}])`; cards filtered by that column refresh.
+   An `isFiltersEmittedFromApp` echo guard prevents self-loops.
 
 ## Quick start (local dev)
 
