@@ -90,6 +90,34 @@ interface ConfigDoc {
    *  Name is the source of truth; functionId cached for callback stability. */
   variableName?: string;
   variableFid?: number;
+  /** v1.3.4: value formula pushed to the variable. Default 'picked'. */
+  variableValueMode?: VarValueMode;
+}
+
+type VarValueMode =
+  | 'picked'
+  | 'startOfMonth'
+  | 'endOfMonth'
+  | 'startOfCY'
+  | 'startOfFY'
+  | 'endOfFY';
+
+function computeVarValue(picked: Date, mode: VarValueMode, fyStartMonth: number): string {
+  const iso = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  if (mode === 'startOfMonth') return iso(new Date(picked.getFullYear(), picked.getMonth(), 1));
+  if (mode === 'endOfMonth')   return iso(new Date(picked.getFullYear(), picked.getMonth() + 1, 0));
+  if (mode === 'startOfCY')    return iso(new Date(picked.getFullYear(), 0, 1));
+  if (mode === 'startOfFY') {
+    const m0 = Math.max(1, Math.min(12, fyStartMonth)) - 1;
+    const y = picked.getMonth() >= m0 ? picked.getFullYear() : picked.getFullYear() - 1;
+    return iso(new Date(y, m0, 1));
+  }
+  if (mode === 'endOfFY') {
+    const m0 = Math.max(1, Math.min(12, fyStartMonth)) - 1;
+    const y = picked.getMonth() >= m0 ? picked.getFullYear() : picked.getFullYear() - 1;
+    return iso(new Date(y + 1, m0, 0));
+  }
+  return iso(picked);
 }
 
 interface DetectedVar {
@@ -364,8 +392,10 @@ export default function App() {
   // v1.3.3: variable emission (optional, additive to page filter)
   const [variableName, setVariableName] = useState<string>('');
   const [detected, setDetected] = useState<DetectedVar[]>([]);
+  const [variableValueMode, setVariableValueMode] = useState<VarValueMode>('picked');
   const variableNameRef = useRef<string>('');
   const variableFidRef = useRef<number | null>(null);
+  const variableValueModeRef = useRef<VarValueMode>('picked');
 
   const [dateFormat, setDateFormat] = useState<DateFormat>(DEFAULT_FORMAT_PATTERN);
   const dateFormatRef = useRef<DateFormat>(DEFAULT_FORMAT_PATTERN);
@@ -495,9 +525,12 @@ export default function App() {
         setFilterDataType(fdt);
         const vn = c.variableName ?? '';
         const vfid = c.variableFid ?? null;
+        const vvm: VarValueMode = c.variableValueMode ?? 'picked';
         variableNameRef.current = vn;
         variableFidRef.current = vfid;
+        variableValueModeRef.current = vvm;
         setVariableName(vn);
+        setVariableValueMode(vvm);
       }
 
       if (stateDoc) {
@@ -586,6 +619,7 @@ export default function App() {
         fyStartMonth: fyStartMonthRef.current,
         variableName: variableNameRef.current || undefined,
         variableFid: variableFidRef.current ?? undefined,
+        variableValueMode: variableValueModeRef.current,
         ...patch,
         type: 'config',
         cardId: CURRENT_CARD_ID,
@@ -816,11 +850,9 @@ export default function App() {
 
   // ── Handlers ──────────────────────────────────────────────────────────────────
 
-  function emitVariable(iso: string) {
+  function emitVariable(picked: Date) {
     const name = variableNameRef.current;
     if (!name) return;
-    // Resolve functionId: prefer live detection (survives rebuild), fall back
-    // to stored fid so first-emit-before-detection still works.
     let fid: number | null = null;
     for (const v of detectedVars.values()) {
       if (v.name === name) { fid = v.functionId; break; }
@@ -830,16 +862,16 @@ export default function App() {
       console.warn(`[emitVariable] '${name}' not yet detected — skipping variable emit`);
       return;
     }
-    // Keep the cached fid fresh so persistSettings writes the latest.
     if (variableFidRef.current !== fid) variableFidRef.current = fid;
+    const value = computeVarValue(picked, variableValueModeRef.current, fyStartMonthRef.current);
     if (IS_LOCAL) {
-      console.log('[DEV] emit variable:', { functionId: fid, value: iso, name });
+      console.log('[DEV] emit variable:', { functionId: fid, value, name, mode: variableValueModeRef.current });
       return;
     }
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (domo as any).requestVariablesUpdate(
-        [{ functionId: fid, value: iso }],
+        [{ functionId: fid, value }],
         () => {},
         (err: unknown) => console.error('[emitVariable] update failed', err),
       );
@@ -857,7 +889,7 @@ export default function App() {
       persistState({ singleDate: iso });
       // Variable emit runs regardless of filter-column presence — customer's
       // beast modes may rely on the variable even without a page filter set.
-      emitVariable(iso);
+      emitVariable(date);
       if (!filterColumnRef.current) return;
       const op = filterOperatorRef.current;
       // Computed-range ops synthesise a BETWEEN payload with a period-start value.
@@ -1103,12 +1135,35 @@ export default function App() {
                     </p>
                   )}
                   {variableName && (
-                    <p className="settings-hint">
-                      On date pick, brick will push the picked ISO date to
-                      <code> {variableName}</code> in addition to emitting the
-                      page filter above. Beast modes referencing this variable
-                      will keep working.
-                    </p>
+                    <>
+                      <label
+                        className="settings-sublabel"
+                        style={{ display: 'block', marginTop: 8 }}
+                      >
+                        Push what value to <code>{variableName}</code>?
+                      </label>
+                      <select
+                        className="settings-input"
+                        value={variableValueMode}
+                        onChange={(e) => {
+                          const v = e.target.value as VarValueMode;
+                          setVariableValueMode(v);
+                          variableValueModeRef.current = v;
+                          persistSettings({ variableValueMode: v }, true);
+                        }}
+                      >
+                        <option value="picked">Picked date (e.g. 2024-11-15)</option>
+                        <option value="startOfMonth">Start of picked month (2024-11-01)</option>
+                        <option value="endOfMonth">End of picked month (2024-11-30)</option>
+                        <option value="startOfCY">Start of calendar year (2024-01-01)</option>
+                        <option value="startOfFY">Start of financial year (uses FY month above)</option>
+                        <option value="endOfFY">End of financial year</option>
+                      </select>
+                      <p className="settings-hint">
+                        Beast modes referencing <code>{variableName}</code> get
+                        this computed value on every date pick.
+                      </p>
+                    </>
                   )}
                 </>
               );
