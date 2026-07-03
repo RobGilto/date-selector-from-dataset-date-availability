@@ -86,11 +86,10 @@ interface ConfigDoc {
   filterDataType?: FilterDataType;
   /** 1-based month of financial-year start. Default 7 (Jul, Australian FY). */
   fyStartMonth?: number;
-  /** v1.3.3: optional App Studio variable to also drive on date pick.
-   *  Name is the source of truth; functionId cached for callback stability. */
+  /** Optional App Studio variable to drive on date pick, by name. Requires a
+   *  page-level Variable Control for this variable on the App Studio page. */
   variableName?: string;
-  variableFid?: number;
-  /** v1.3.4: value formula pushed to the variable. Default 'picked'. */
+  /** Value formula pushed to the variable. Default 'picked'. */
   variableValueMode?: VarValueMode;
 }
 
@@ -312,74 +311,15 @@ async function fetchLocalDates(): Promise<string[]> {
 // ── Echo guard ──────────────────────────────────────────────────────────────
 let isFiltersEmittedFromApp = false;
 
-// v1.3.8 diagnostic: known NAB variable name→functionId (from HAR). Used only
-// as a last-resort fallback when the fid can't be discovered or pasted.
-const KNOWN_VARIABLE_IDS: Record<string, number> = {
-  vMonthStart_test: 132051,
-  vMonthStart: 130340,
-};
-
-// ── Live variable detection (v1.3.3) ────────────────────────────────────────
-// Populated by domo.onVariablesUpdated. Keyed by functionId. Feeds the gear
-// panel's "Also drive App Studio variable" dropdown so admins pick by NAME
-// only — functionIds never surface in UI.
+// ── Live variable detection ─────────────────────────────────────────────────
+// Populated by domo.onVariablesUpdated when App Studio pushes variable state.
+// Feeds the gear panel's variable-name autocomplete. May stay empty (App
+// Studio doesn't always push to custom-app cards) — the admin can still type
+// the name manually.
 const detectedVars = new Map<number, DetectedVar>();
 const detectedVarsListeners = new Set<() => void>();
 function notifyDetected() {
   detectedVarsListeners.forEach((fn) => { try { fn(); } catch { /* ignore */ } });
-}
-// v1.3.5: proactive variable discovery. onVariablesUpdated only fires when
-// App Studio pushes updates; for a fresh page load with a custom-app card
-// that isn't wired as a variable consumer, no push happens and the listener
-// never fires. So we fetch the page's card list, then query variable
-// controls for those cards, and seed detectedVars from that.
-async function discoverPageVariables(): Promise<void> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const env = (domo as any).env ?? {};
-    const pageId = String(env.pageId ?? '').trim();
-    if (!pageId) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const page = (await (domo as any).get(
-      `/content/v1/pages/${pageId}?parts=cards,collections`,
-    )) as unknown;
-    const cardIds: string[] = [];
-    const collect = (n: unknown) => {
-      if (!n || typeof n !== 'object') return;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const obj = n as any;
-      if (Array.isArray(obj.cards)) obj.cards.forEach((c: { id?: number | string }) => {
-        if (c?.id != null) cardIds.push(String(c.id));
-      });
-      if (Array.isArray(obj.collections)) obj.collections.forEach(collect);
-      if (Array.isArray(obj.children)) obj.children.forEach(collect);
-    };
-    collect(page);
-    if (cardIds.length === 0) return;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const resp = (await (domo as any).put(
-      `/content/v1/cards/variable/controls/list`,
-      cardIds,
-    )) as Record<string, Array<{ function?: { id?: number; name?: string }; parsedExpression?: { value?: unknown } }>>;
-    let added = 0;
-    Object.values(resp || {}).forEach((funcs) => {
-      (funcs || []).forEach((f) => {
-        const fid = f?.function?.id;
-        const name = f?.function?.name;
-        if (typeof fid === 'number' && Number.isFinite(fid)) {
-          detectedVars.set(fid, {
-            functionId: fid,
-            name: typeof name === 'string' ? name : undefined,
-            value: f?.parsedExpression?.value,
-          });
-          added++;
-        }
-      });
-    });
-    if (added > 0) notifyDetected();
-  } catch (e) {
-    console.warn('[discoverPageVariables]', e);
-  }
 }
 
 let variablesListenerRegistered = false;
@@ -450,13 +390,11 @@ export default function App() {
   const filterDataTypeRef = useRef<FilterDataType>('DATE');
   const fyStartMonthRef = useRef<number>(7);
 
-  // v1.3.3: variable emission (optional, additive to page filter)
+  // Variable emission (drives App Studio variable by name on date pick)
   const [variableName, setVariableName] = useState<string>('');
-  const [variableFid, setVariableFid] = useState<number | null>(null);
   const [detected, setDetected] = useState<DetectedVar[]>([]);
   const [variableValueMode, setVariableValueMode] = useState<VarValueMode>('picked');
   const variableNameRef = useRef<string>('');
-  const variableFidRef = useRef<number | null>(null);
   const variableValueModeRef = useRef<VarValueMode>('picked');
 
   const [dateFormat, setDateFormat] = useState<DateFormat>(DEFAULT_FORMAT_PATTERN);
@@ -483,13 +421,10 @@ export default function App() {
     resolveRole().then(setRole).catch(() => setRole('user'));
   }, []);
 
-  // v1.3.3: subscribe to live variable detection so gear panel dropdown
-  // lists names admins can pick without knowing functionIds.
+  // Subscribe to live variable detection so the gear panel autocompletes
+  // variable names when App Studio pushes them.
   useEffect(() => {
-    if (!IS_LOCAL) {
-      registerVariablesListener();
-      discoverPageVariables();
-    }
+    if (!IS_LOCAL) registerVariablesListener();
     const onChange = () => setDetected(Array.from(detectedVars.values()));
     detectedVarsListeners.add(onChange);
     onChange();
@@ -589,13 +524,10 @@ export default function App() {
         setFilterOperator(fo);
         setFilterDataType(fdt);
         const vn = c.variableName ?? '';
-        const vfid = c.variableFid ?? null;
         const vvm: VarValueMode = c.variableValueMode ?? 'picked';
         variableNameRef.current = vn;
-        variableFidRef.current = vfid;
         variableValueModeRef.current = vvm;
         setVariableName(vn);
-        setVariableFid(vfid);
         setVariableValueMode(vvm);
       }
 
@@ -684,7 +616,6 @@ export default function App() {
         filterDataType: filterDataTypeRef.current,
         fyStartMonth: fyStartMonthRef.current,
         variableName: variableNameRef.current || undefined,
-        variableFid: variableFidRef.current ?? undefined,
         variableValueMode: variableValueModeRef.current,
         ...patch,
         type: 'config',
@@ -791,11 +722,15 @@ export default function App() {
       filterColumnRef.current = '';
       filterOperatorRef.current = 'EQUALS';
       filterDataTypeRef.current = 'DATE';
+      variableNameRef.current = '';
+      variableValueModeRef.current = 'picked';
       viewModeRef.current = 'list';
       dateFormatRef.current = DEFAULT_FORMAT_PATTERN;
       setFilterColumn('');
       setFilterOperator('EQUALS');
       setFilterDataType('DATE');
+      setVariableName('');
+      setVariableValueMode('picked');
       setViewMode('list');
       setDateFormat(DEFAULT_FORMAT_PATTERN);
       setSingleSelected(undefined);
@@ -919,40 +854,22 @@ export default function App() {
   function emitVariable(picked: Date) {
     const name = variableNameRef.current;
     if (!name) return;
-    let fid: number | null = null;
-    for (const v of detectedVars.values()) {
-      if (v.name === name) { fid = v.functionId; break; }
-    }
-    if (fid == null) fid = variableFidRef.current;
-    // v1.3.8 diagnostic: last-resort name→fid lookup for known variables.
-    // Custom-app iframes can't reach the variable-controls API and App Studio
-    // never pushes variable state to the card, so auto-discovery of the fid
-    // isn't possible. This proves whether fid-based override applies at all.
-    if (fid == null && KNOWN_VARIABLE_IDS[name] != null) fid = KNOWN_VARIABLE_IDS[name];
-    if (fid != null && Number.isFinite(fid) && variableFidRef.current !== fid) {
-      variableFidRef.current = fid;
-    }
     const value = computeVarValue(picked, variableValueModeRef.current, fyStartMonthRef.current);
-    // DATE variables take an ISO 'YYYY-MM-DD' string. Beast modes compare
-    // `Date` = vMonthStart_test against the raw date, so the value must be the
-    // ISO date, not epoch millis.
-    // ryuu v6 Variable interface: { functionId?, name?, value } — either
-    // identifier accepted. Prefer fid when known, fall back to name.
-    const payload: { functionId?: number; name?: string; value: string } = { value };
-    if (fid != null && Number.isFinite(fid)) payload.functionId = fid;
-    else payload.name = name;
+    // Drive the App Studio variable by NAME. Requires a page-level Variable
+    // Control for this variable to exist on the App Studio page — that
+    // registers the name so the override propagates to every beast-mode card.
+    // DATE variables take an ISO 'YYYY-MM-DD' string (not epoch).
+    const payload = { name, value };
     if (IS_LOCAL) {
       console.log('[DEV] emit variable:', { ...payload, mode: variableValueModeRef.current });
       return;
     }
     try {
-      const via = payload.functionId != null ? `fid=${payload.functionId}` : `name=${name}`;
-      console.log(`[emitVariable] sending ${via} value=${value}`);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (domo as any).requestVariablesUpdate(
         [payload],
-        () => console.log(`[emitVariable] ✓ ack (${via}) = ${value}`),
-        (reply: unknown) => console.log('[emitVariable] ← reply:', JSON.stringify(reply)),
+        () => {},
+        () => {},
       );
     } catch (e) {
       console.error('[emitVariable]', e);
@@ -1016,8 +933,6 @@ export default function App() {
   if (dataStatus === 'error')
     return <div className="state-msg error">Failed to load dates: {dataError}</div>;
 
-  const samplePreviewDate = singleSelected ? toISO(singleSelected) : 'YYYY-MM-DD';
-
   return (
     <div className={`app mode-${role}`}>
       {toolbarLabel && (
@@ -1041,128 +956,11 @@ export default function App() {
 
       {role === 'admin' && showSettings && (
         <div className="settings-panel">
-          <label className="settings-label">Filter Configuration</label>
+          <label className="settings-label">Date Selector Settings</label>
 
+          {/* ── Primary: drive an App Studio variable ── */}
           <div className="settings-group">
-            <label className="settings-sublabel">Filter column</label>
-            <select
-              className="settings-input"
-              value={filterColumn}
-              onChange={(e) => {
-                const v = e.target.value;
-                setFilterColumn(v);
-                filterColumnRef.current = v;
-                persistSettings({ filterColumn: v || undefined }, true);
-              }}
-            >
-              <option value="">— select a column —</option>
-              {columns.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-            {columns.length === 0 && (
-              <p className="settings-hint">
-                No columns discovered. Confirm dataset alias <code>{DATASET_ALIAS}</code>
-                {' '}is bound. You may also type a column name below:
-              </p>
-            )}
-            {columns.length === 0 && (
-              <input
-                className="settings-input"
-                type="text"
-                placeholder="Column name (fallback)"
-                value={filterColumn}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  setFilterColumn(v);
-                  filterColumnRef.current = v;
-                  persistSettings({ filterColumn: v || undefined }, true);
-                }}
-              />
-            )}
-          </div>
-
-          <div className="settings-group">
-            <label className="settings-sublabel">Filter operator</label>
-            <select
-              className="settings-input"
-              value={filterOperator}
-              onChange={(e) => {
-                const v = e.target.value as FilterOperator;
-                setFilterOperator(v);
-                filterOperatorRef.current = v;
-                persistSettings({ filterOperator: v }, true);
-              }}
-            >
-              <optgroup label="Direct">
-                <option value="EQUALS">EQUALS (single date)</option>
-                <option value="LESS_THAN_EQUALS_TO">LESS_THAN_EQUALS_TO (through date)</option>
-                <option value="GREAT_THAN_EQUALS_TO">GREAT_THAN_EQUALS_TO (from date)</option>
-                <option value="BETWEEN">BETWEEN (range)</option>
-              </optgroup>
-              <optgroup label="Computed range (auto-BETWEEN)">
-                <option value="MTD">MTD — Month to date</option>
-                <option value="CYTD">CYTD — Calendar year to date</option>
-                <option value="FYTD">FYTD — Financial year to date</option>
-              </optgroup>
-            </select>
-            <p className="settings-hint">
-              Computed ranges emit <code>BETWEEN [period-start, picked]</code>{' '}
-              so downstream cards see the full period without beast-mode rework.
-            </p>
-          </div>
-
-          {filterOperator === 'FYTD' && (
-            <div className="settings-group">
-              <label className="settings-sublabel">Financial year starts</label>
-              <select
-                className="settings-input"
-                value={fyStartMonth}
-                onChange={(e) => {
-                  const v = parseInt(e.target.value, 10);
-                  if (!Number.isFinite(v)) return;
-                  setFyStartMonth(v);
-                  fyStartMonthRef.current = v;
-                  persistSettings({ fyStartMonth: v }, true);
-                }}
-              >
-                {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => (
-                  <option key={m} value={i + 1}>{i + 1} — {m} 1{i === 0 ? ' (Calendar year)' : ''}{i + 1 === 7 ? ' (AU tax year)' : ''}{i + 1 === 10 ? ' (AU marketing FY, e.g. NAB)' : ''}</option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div className="settings-group">
-            <label className="settings-sublabel">Data type</label>
-            <select
-              className="settings-input"
-              value={filterDataType}
-              onChange={(e) => {
-                const v = e.target.value as FilterDataType;
-                setFilterDataType(v);
-                filterDataTypeRef.current = v;
-                persistSettings({ filterDataType: v }, true);
-              }}
-            >
-              <option value="DATE">DATE</option>
-              <option value="STRING">STRING</option>
-              <option value="NUMERIC">NUMERIC</option>
-            </select>
-          </div>
-
-          <p className="settings-hint">
-            Preview payload:{' '}
-            <code>
-              [{'{'}column:"{filterColumn || '?'}", operator:"{filterOperator}",
-              values:["{samplePreviewDate}"], dataType:"{filterDataType}"{'}'}]
-            </code>
-          </p>
-
-          <div className="settings-group">
-            <label className="settings-sublabel">
-              Also drive App Studio variable (optional)
-            </label>
+            <label className="settings-sublabel">Drive App Studio variable</label>
             {(() => {
               const namedDetected = detected.filter((d) => !!d.name);
               return (
@@ -1175,18 +973,9 @@ export default function App() {
                     value={variableName}
                     onChange={(e) => {
                       const v = e.target.value.trim();
-                      const match = namedDetected.find((d) => d.name === v);
                       variableNameRef.current = v;
-                      // Only overwrite fid from a detection match; keep a
-                      // manually-pasted fid otherwise.
-                      const nextFid = match?.functionId ?? variableFidRef.current ?? null;
-                      variableFidRef.current = nextFid;
                       setVariableName(v);
-                      setVariableFid(nextFid);
-                      persistSettings({
-                        variableName: v || undefined,
-                        variableFid: nextFid ?? undefined,
-                      }, true);
+                      persistSettings({ variableName: v || undefined }, true);
                     }}
                   />
                   <datalist id="variable-name-options">
@@ -1197,38 +986,13 @@ export default function App() {
                     ))}
                   </datalist>
                   <p className="settings-hint">
-                    Type the exact variable name (e.g. <code>vMonthStart_test</code>).
-                    {namedDetected.length > 0
-                      ? ` Autocomplete lists ${namedDetected.length} detected variable${namedDetected.length === 1 ? '' : 's'}.`
-                      : ' No auto-detected variables yet — App Studio does not push variables to custom-app cards, so type the name manually.'}
+                    Type the exact variable name. <strong>Requires a page-level
+                    Variable Control</strong> for this variable on the App Studio
+                    page (Edit → drag Control → add the variable) so the value
+                    reaches the cards.
                   </p>
                   {variableName && (
                     <>
-                      <label
-                        className="settings-sublabel"
-                        style={{ display: 'block', marginTop: 8 }}
-                      >
-                        Variable ID (auto-fills if detected; paste once if blank)
-                      </label>
-                      <input
-                        className="settings-input"
-                        type="number"
-                        placeholder="e.g. 132051"
-                        value={variableFid ?? ''}
-                        onChange={(e) => {
-                          const raw = e.target.value.trim();
-                          const n = raw ? parseInt(raw, 10) : null;
-                          const val = n != null && Number.isFinite(n) ? n : null;
-                          variableFidRef.current = val;
-                          setVariableFid(val);
-                          persistSettings({ variableFid: val ?? undefined }, true);
-                        }}
-                      />
-                      <p className="settings-hint">
-                        Domo resolves variables reliably by ID. Find it once via
-                        the variable's URL or ask your Domo admin. Brick pushes
-                        by ID when present, else by name.
-                      </p>
                       <label
                         className="settings-sublabel"
                         style={{ display: 'block', marginTop: 8 }}
@@ -1249,19 +1013,108 @@ export default function App() {
                         <option value="startOfMonth">Start of picked month (2024-11-01)</option>
                         <option value="endOfMonth">End of picked month (2024-11-30)</option>
                         <option value="startOfCY">Start of calendar year (2024-01-01)</option>
-                        <option value="startOfFY">Start of financial year (uses FY month above)</option>
+                        <option value="startOfFY">Start of financial year (uses FY month below)</option>
                         <option value="endOfFY">End of financial year</option>
                       </select>
-                      <p className="settings-hint">
-                        Beast modes referencing <code>{variableName}</code> get
-                        this computed value on every date pick.
-                      </p>
                     </>
                   )}
                 </>
               );
             })()}
           </div>
+
+          {/* ── Optional: emit a page filter instead of / alongside a variable ── */}
+          <details className="settings-group">
+            <summary className="settings-sublabel" style={{ cursor: 'pointer' }}>
+              Page filter (optional)
+            </summary>
+            <p className="settings-hint">
+              Leave the column blank to skip. Use only if downstream cards filter
+              by a dataset column directly instead of a variable.
+            </p>
+
+            <label className="settings-sublabel">Filter column</label>
+            <select
+              className="settings-input"
+              value={filterColumn}
+              onChange={(e) => {
+                const v = e.target.value;
+                setFilterColumn(v);
+                filterColumnRef.current = v;
+                persistSettings({ filterColumn: v || undefined }, true);
+              }}
+            >
+              <option value="">— none —</option>
+              {columns.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+
+            {filterColumn && (
+              <>
+                <label className="settings-sublabel" style={{ marginTop: 8 }}>Filter operator</label>
+                <select
+                  className="settings-input"
+                  value={filterOperator}
+                  onChange={(e) => {
+                    const v = e.target.value as FilterOperator;
+                    setFilterOperator(v);
+                    filterOperatorRef.current = v;
+                    persistSettings({ filterOperator: v }, true);
+                  }}
+                >
+                  <optgroup label="Direct">
+                    <option value="EQUALS">EQUALS (single date)</option>
+                    <option value="LESS_THAN_EQUALS_TO">LESS_THAN_EQUALS_TO (through date)</option>
+                    <option value="GREAT_THAN_EQUALS_TO">GREAT_THAN_EQUALS_TO (from date)</option>
+                    <option value="BETWEEN">BETWEEN (range)</option>
+                  </optgroup>
+                  <optgroup label="Computed range (auto-BETWEEN)">
+                    <option value="MTD">MTD — Month to date</option>
+                    <option value="CYTD">CYTD — Calendar year to date</option>
+                    <option value="FYTD">FYTD — Financial year to date</option>
+                  </optgroup>
+                </select>
+
+                {filterOperator === 'FYTD' && (
+                  <>
+                    <label className="settings-sublabel" style={{ marginTop: 8 }}>Financial year starts</label>
+                    <select
+                      className="settings-input"
+                      value={fyStartMonth}
+                      onChange={(e) => {
+                        const v = parseInt(e.target.value, 10);
+                        if (!Number.isFinite(v)) return;
+                        setFyStartMonth(v);
+                        fyStartMonthRef.current = v;
+                        persistSettings({ fyStartMonth: v }, true);
+                      }}
+                    >
+                      {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => (
+                        <option key={m} value={i + 1}>{i + 1} — {m} 1{i === 0 ? ' (Calendar year)' : ''}{i + 1 === 7 ? ' (AU tax year)' : ''}{i + 1 === 10 ? ' (AU marketing FY)' : ''}</option>
+                      ))}
+                    </select>
+                  </>
+                )}
+
+                <label className="settings-sublabel" style={{ marginTop: 8 }}>Data type</label>
+                <select
+                  className="settings-input"
+                  value={filterDataType}
+                  onChange={(e) => {
+                    const v = e.target.value as FilterDataType;
+                    setFilterDataType(v);
+                    filterDataTypeRef.current = v;
+                    persistSettings({ filterDataType: v }, true);
+                  }}
+                >
+                  <option value="DATE">DATE</option>
+                  <option value="STRING">STRING</option>
+                  <option value="NUMERIC">NUMERIC</option>
+                </select>
+              </>
+            )}
+          </details>
 
           <div className="settings-group">
             <label className="settings-sublabel">Default view</label>
@@ -1397,9 +1250,10 @@ export default function App() {
             </div>
           </div>
 
-          {!filterColumn && (
+          {!variableName && !filterColumn && (
             <p className="range-config-warn">
-              ⚠ No filter column selected — date picks will not affect cards.
+              ⚠ Nothing configured — set a variable (or a page filter) or date
+              picks won't affect any cards.
             </p>
           )}
           <div className="settings-actions">
@@ -1410,6 +1264,9 @@ export default function App() {
 
           <p className="settings-saved">
             <strong>Admin</strong> · Card {CURRENT_CARD_ID.slice(0, 8)}
+            {variableName && (
+              <> · var=<code>{variableName}</code></>
+            )}
             {filterColumn && (
               <> · filter=<code>{filterColumn}</code> {filterOperator}</>
             )}
