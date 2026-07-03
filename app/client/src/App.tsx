@@ -321,6 +321,60 @@ const detectedVarsListeners = new Set<() => void>();
 function notifyDetected() {
   detectedVarsListeners.forEach((fn) => { try { fn(); } catch { /* ignore */ } });
 }
+// v1.3.5: proactive variable discovery. onVariablesUpdated only fires when
+// App Studio pushes updates; for a fresh page load with a custom-app card
+// that isn't wired as a variable consumer, no push happens and the listener
+// never fires. So we fetch the page's card list, then query variable
+// controls for those cards, and seed detectedVars from that.
+async function discoverPageVariables(): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const env = (domo as any).env ?? {};
+    const pageId = String(env.pageId ?? '').trim();
+    if (!pageId) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const page = (await (domo as any).get(
+      `/content/v1/pages/${pageId}?parts=cards,collections`,
+    )) as unknown;
+    const cardIds: string[] = [];
+    const collect = (n: unknown) => {
+      if (!n || typeof n !== 'object') return;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const obj = n as any;
+      if (Array.isArray(obj.cards)) obj.cards.forEach((c: { id?: number | string }) => {
+        if (c?.id != null) cardIds.push(String(c.id));
+      });
+      if (Array.isArray(obj.collections)) obj.collections.forEach(collect);
+      if (Array.isArray(obj.children)) obj.children.forEach(collect);
+    };
+    collect(page);
+    if (cardIds.length === 0) return;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const resp = (await (domo as any).put(
+      `/content/v1/cards/variable/controls/list`,
+      cardIds,
+    )) as Record<string, Array<{ function?: { id?: number; name?: string }; parsedExpression?: { value?: unknown } }>>;
+    let added = 0;
+    Object.values(resp || {}).forEach((funcs) => {
+      (funcs || []).forEach((f) => {
+        const fid = f?.function?.id;
+        const name = f?.function?.name;
+        if (typeof fid === 'number' && Number.isFinite(fid)) {
+          detectedVars.set(fid, {
+            functionId: fid,
+            name: typeof name === 'string' ? name : undefined,
+            value: f?.parsedExpression?.value,
+          });
+          added++;
+        }
+      });
+    });
+    if (added > 0) notifyDetected();
+  } catch (e) {
+    console.warn('[discoverPageVariables]', e);
+  }
+}
+
 let variablesListenerRegistered = false;
 function registerVariablesListener() {
   if (variablesListenerRegistered) return;
@@ -424,7 +478,10 @@ export default function App() {
   // v1.3.3: subscribe to live variable detection so gear panel dropdown
   // lists names admins can pick without knowing functionIds.
   useEffect(() => {
-    if (!IS_LOCAL) registerVariablesListener();
+    if (!IS_LOCAL) {
+      registerVariablesListener();
+      discoverPageVariables();
+    }
     const onChange = () => setDetected(Array.from(detectedVars.values()));
     detectedVarsListeners.add(onChange);
     onChange();
@@ -1048,7 +1105,7 @@ export default function App() {
                 }}
               >
                 {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => (
-                  <option key={m} value={i + 1}>{i + 1} — {m} 1{i + 1 === 7 ? ' (Australian FY)' : ''}{i === 0 ? ' (Calendar year)' : ''}</option>
+                  <option key={m} value={i + 1}>{i + 1} — {m} 1{i === 0 ? ' (Calendar year)' : ''}{i + 1 === 7 ? ' (AU tax year)' : ''}{i + 1 === 10 ? ' (AU marketing FY, e.g. NAB)' : ''}</option>
                 ))}
               </select>
             </div>
