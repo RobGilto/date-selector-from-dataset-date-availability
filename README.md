@@ -29,6 +29,51 @@ refresh automatically.
 [`docs/SETUP.md`](docs/SETUP.md) for the full admin walkthrough (add card
 → bind dataset → **add page Variable Control** → configure → pick format).
 
+## Project links & tracking
+
+| What | Link / ID |
+|---|---|
+| **Instance** | `nab-au.domo.com` |
+| **App Studio page (live dashboard)** | https://nab-au.domo.com/app-studio/1292970502/pages/1611752341 |
+| ↳ dataapp id | `1292970502` |
+| ↳ page id | `1611752341` |
+| **Design (Asset Library)** | https://nab-au.domo.com/assetlibrary?designId=4896fd53-0232-42d3-b31b-7be12b50e6ed |
+| ↳ design id | `4896fd53-0232-42d3-b31b-7be12b50e6ed` |
+| **Bound dataset** — DEV \| DS \| SAMPLE DATA | https://nab-au.domo.com/datasources/517ca1d7-3130-452b-926a-e4a6612212ee/details/overview |
+| ↳ dataset id | `517ca1d7-3130-452b-926a-e4a6612212ee` |
+| ↳ manifest alias / date column | `sampleData` / `Date` |
+| **AppDB collection** | `date-selector-settings` |
+| **GitHub repo** | https://github.com/RobGilto/date-selector-from-dataset-date-availability |
+| **Salesforce case** | `05930295` |
+
+### App Studio variables (NAB dashboard)
+
+| Variable / beast mode | functionId | Role |
+|---|---|---|
+| `vMonthStart_test` | `132051` | Driven by the brick (start-of-picked-month). Upper bound for Monthly + YTD beast modes. |
+| `vMonthStart` | `130340` | Production equivalent of the above. |
+| `vFYStart` (beast mode) | `132052` | Derived: `CASE WHEN MONTH(vMonthStart_test) >= 10 THEN Oct 1 same yr ELSE Oct 1 prior yr` (NAB FY = **October**). |
+
+> **Recommended NAB config:** variable `vMonthStart_test`, push value
+> **Start of picked month**, **Page filter = none**. A page filter on the
+> same page narrows rows and collapses YTD onto Monthly — keep it off for
+> this dashboard.
+
+### Publish (ryuu)
+
+```bash
+cd app/client
+npm run build
+cp public/manifest.json dist/manifest.json
+cd dist && npx ryuu publish            # targets the most-recent ryuu instance
+# if it prompts for the wrong instance, first:
+#   npx ryuu token add -i nab-au.domo.com -t <DEV_TOKEN>
+```
+
+Dev tokens are short-lived — get a fresh one from
+`nab-au.domo.com` → Admin → Security → Access Tokens when publish
+returns "You do not have access to the design…".
+
 ## Documentation
 
 - **User documentation** → [`docs/SETUP.md`](docs/SETUP.md) — admin
