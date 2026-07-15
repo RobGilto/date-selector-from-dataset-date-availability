@@ -80,33 +80,33 @@ returns "You do not have access to the design…".
 > session can pick up cold. Keep it short — decisions and next action,
 > not narration.
 
-### 🟡 Now — pick up here
+### 🟢 Now — working
 
-- **Deployed:** v1.4.0 live on nab-au (published 2026-07-13).
-- **Open issue:** on the NAB dashboard, **Monthly Performance == YTD
-  Performance** (both ≈ 13.70M).
-- **Root cause (confirmed):** a **page filter is still applied** to the
-  page — it narrows every card to a single month, so the YTD beast mode
-  has no prior months to accumulate. The brick itself is correct
-  (verified locally: variable-only config emits only the variable, no
-  `filterContainer`).
-- **Next action (on nab-au, needs SSO login — can't be done from the
-  dev machine):**
-  1. Brick gear → **Page filter (optional)** → **Filter column → none** → save.
-  2. Top-right page **filter icon (badge 1/2)** → **remove every filter
-     chip** (especially `Date`) — these persist even after the brick
-     stops emitting.
-  3. Reload → pick a date. Expect the bottom table to show **multiple
-     month rows** and YTD > Monthly.
-- **If still equal after clearing:** capture a fresh HAR of one date
-  pick → trace whether `vFYStart` (132052) is recomputing from the
-  driven `vMonthStart_test` (132051).
-- **Recommended config:** variable `vMonthStart_test`, push **Start of
-  picked month**, page filter **none**, FY start **Oct**.
+- **Deployed:** v1.4.1 live on nab-au (published 2026-07-15).
+- **Status:** RESOLVED. On the NAB dashboard, Monthly (18.07M) ≠ YTD
+  (108.31M) — correct. The earlier Monthly==YTD was a **stuck page-filter
+  chip** narrowing all cards to one month; cleared it and removed the
+  page-filter feature entirely so it can't recur.
+- **v1.4.1 is variable-drive only** — page filter, its warning, and all
+  filter code removed. Gear = variable name + push-value + FY-start
+  (for FY value modes) + view + date format.
+- **NAB config on the page:** native Variable Control for
+  `vMonthStart_test` present; brick set to variable `vMonthStart_test`,
+  push **Start of picked month**. (FY start only matters for
+  Start/End-of-FY value modes; NAB uses Start-of-month.)
+- **Next / open:** none blocking. If a variable ever stops driving
+  cards, first check a **page-level Variable Control exists** for it
+  (that's the whole mechanism). `cardId` still falls back to
+  `local-card-001` in the embed (per-card scoping caveat) — revisit if
+  multiple cards per page are needed.
 
 ### History
 
-- **2026-07-15** — README: add Project links & tracking + this status log.
+- **2026-07-15** — v1.4.1: removed the page-filter feature entirely
+  (variable-drive only) + the stale "No filter column configured"
+  warning; FY-month selector moved into the variable section. Confirmed
+  working on nab-au (Monthly ≠ YTD). README: added Project links,
+  tracking, and this status log.
 - **2026-07-13** — v1.4.0 published to nab-au. Settings cleanup:
   variable-drive primary, page filter demoted to optional/collapsed,
   removed diagnostic cruft (hardcoded id map, manual ID field, dead
