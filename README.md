@@ -74,6 +74,55 @@ Dev tokens are short-lived — get a fresh one from
 `nab-au.domo.com` → Admin → Security → Access Tokens when publish
 returns "You do not have access to the design…".
 
+## Status log
+
+> Newest first. Update the **Now** block whenever you stop, so the next
+> session can pick up cold. Keep it short — decisions and next action,
+> not narration.
+
+### 🟡 Now — pick up here
+
+- **Deployed:** v1.4.0 live on nab-au (published 2026-07-13).
+- **Open issue:** on the NAB dashboard, **Monthly Performance == YTD
+  Performance** (both ≈ 13.70M).
+- **Root cause (confirmed):** a **page filter is still applied** to the
+  page — it narrows every card to a single month, so the YTD beast mode
+  has no prior months to accumulate. The brick itself is correct
+  (verified locally: variable-only config emits only the variable, no
+  `filterContainer`).
+- **Next action (on nab-au, needs SSO login — can't be done from the
+  dev machine):**
+  1. Brick gear → **Page filter (optional)** → **Filter column → none** → save.
+  2. Top-right page **filter icon (badge 1/2)** → **remove every filter
+     chip** (especially `Date`) — these persist even after the brick
+     stops emitting.
+  3. Reload → pick a date. Expect the bottom table to show **multiple
+     month rows** and YTD > Monthly.
+- **If still equal after clearing:** capture a fresh HAR of one date
+  pick → trace whether `vFYStart` (132052) is recomputing from the
+  driven `vMonthStart_test` (132051).
+- **Recommended config:** variable `vMonthStart_test`, push **Start of
+  picked month**, page filter **none**, FY start **Oct**.
+
+### History
+
+- **2026-07-15** — README: add Project links & tracking + this status log.
+- **2026-07-13** — v1.4.0 published to nab-au. Settings cleanup:
+  variable-drive primary, page filter demoted to optional/collapsed,
+  removed diagnostic cruft (hardcoded id map, manual ID field, dead
+  page-var discovery). Diagnosed Monthly==YTD as stuck page filter.
+- **2026-07-03** — Root cause of "variable never drives cards" found: a
+  **page-level Variable Control must exist** on the App Studio page for a
+  custom-app card to drive a variable (docs-confirmed). Value must be ISO
+  `YYYY-MM-DD`; functionId not needed once the control exists.
+  Shipped v1.3.4–v1.3.10 (computed ranges MTD/CYTD/FYTD, hybrid
+  variable+filter emit, value-formula selector).
+- **2026-07-02** — v1.3.1 shipped: editable custom date formats in a
+  shared collection. Docs rewritten around card-wiring flow.
+- **2026-07-01** — v1.3.0: scrapped variable-drive, adopted
+  `domo.filterContainer` page-filter emission (later reversed — variable
+  path restored once the Variable Control requirement was understood).
+
 ## Documentation
 
 - **User documentation** → [`docs/SETUP.md`](docs/SETUP.md) — admin
