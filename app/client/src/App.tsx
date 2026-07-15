@@ -15,9 +15,6 @@ const IS_LOCAL =
   window.location.hostname === 'localhost' ||
   window.location.hostname === '127.0.0.1';
 
-const COLUMNS_CACHE_KEY = `date-selector:columns:${DATASET_ALIAS}:v1`;
-const COLUMNS_TTL_MS = 30 * 60 * 1000;
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const CURRENT_CARD_ID: string =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -49,44 +46,16 @@ function normalizeFormatPattern(stored: string | undefined): string {
   if (!stored) return DEFAULT_FORMAT_PATTERN;
   return LEGACY_FORMAT_MAP[stored] ?? stored;
 }
-// Direct emit ops map 1:1 to Domo FilterOperatorsNumeric.
-// Computed-range ops (MTD/CYTD/FYTD) synthesise a BETWEEN payload with a
-// computed start-of-period value; the picked date is the end.
-type FilterOperator =
-  | 'EQUALS'
-  | 'BETWEEN'
-  | 'LESS_THAN_EQUALS_TO'
-  | 'GREAT_THAN_EQUALS_TO'
-  | 'MTD'
-  | 'CYTD'
-  | 'FYTD';
-
-function computedStartForOp(picked: Date, op: FilterOperator, fyStartMonth: number): Date | null {
-  if (op === 'MTD') return new Date(picked.getFullYear(), picked.getMonth(), 1);
-  if (op === 'CYTD') return new Date(picked.getFullYear(), 0, 1);
-  if (op === 'FYTD') {
-    // fyStartMonth is 1-based (1 = Jan, 7 = Jul AU).
-    const m0 = Math.max(1, Math.min(12, fyStartMonth)) - 1;
-    const pickedM = picked.getMonth();
-    const y = pickedM >= m0 ? picked.getFullYear() : picked.getFullYear() - 1;
-    return new Date(y, m0, 1);
-  }
-  return null;
-}
-type FilterDataType = 'DATE' | 'STRING' | 'NUMERIC';
-
 interface ConfigDoc {
   type?: 'config';
   cardId?: string;
   mode?: SelectionMode;
   viewMode?: ViewMode;
   dateFormat?: DateFormat;
-  filterColumn?: string;
-  filterOperator?: FilterOperator;
-  filterDataType?: FilterDataType;
-  /** 1-based month of financial-year start. Default 7 (Jul, Australian FY). */
+  /** 1-based month of financial-year start. Default 7 (Jul). Used by the
+   *  Start/End-of-financial-year variable value modes. */
   fyStartMonth?: number;
-  /** Optional App Studio variable to drive on date pick, by name. Requires a
+  /** App Studio variable to drive on date pick, by name. Requires a
    *  page-level Variable Control for this variable on the App Studio page. */
   variableName?: string;
   /** Value formula pushed to the variable. Default 'picked'. */
@@ -243,56 +212,6 @@ const collBackend = {
   },
 };
 
-// ── Schema fetch ────────────────────────────────────────────────────────────
-async function fetchDatasetColumns(): Promise<string[]> {
-  try {
-    const cached = localStorage.getItem(COLUMNS_CACHE_KEY);
-    if (cached) {
-      const parsed = JSON.parse(cached) as { at: number; cols: string[] };
-      if (Date.now() - parsed.at < COLUMNS_TTL_MS && Array.isArray(parsed.cols)) {
-        return parsed.cols;
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-  let cols: string[] = [];
-  try {
-    if (IS_LOCAL) {
-      const res = await fetch('/sample-data.csv');
-      const text = await res.text();
-      const header = text.trim().split('\n')[0];
-      cols = header.split(',').map((h) => h.trim()).filter(Boolean);
-    } else {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const rows = (await (domo as any).post(
-        `/sql/v1/${DATASET_ALIAS}`,
-        `SELECT * FROM ${DATASET_ALIAS} LIMIT 1`,
-        { contentType: 'text/plain' }
-      )) as unknown;
-      // Response shape varies: {columns:[...]}, or array of row objects.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const r = rows as any;
-      if (r && Array.isArray(r.columns)) cols = r.columns.map(String);
-      else if (Array.isArray(r) && r.length && typeof r[0] === 'object') {
-        cols = Object.keys(r[0]);
-      } else if (r && Array.isArray(r.rows) && r.rows.length) {
-        cols = Object.keys(r.rows[0]);
-      }
-    }
-  } catch (e) {
-    console.warn('[fetchDatasetColumns] failed', e);
-  }
-  if (cols.length) {
-    try {
-      localStorage.setItem(COLUMNS_CACHE_KEY, JSON.stringify({ at: Date.now(), cols }));
-    } catch {
-      /* ignore */
-    }
-  }
-  return cols;
-}
-
 async function fetchLocalDates(): Promise<string[]> {
   const res = await fetch('/sample-data.csv');
   const text = await res.text();
@@ -307,9 +226,6 @@ async function fetchLocalDates(): Promise<string[]> {
   });
   return Array.from(seen).sort();
 }
-
-// ── Echo guard ──────────────────────────────────────────────────────────────
-let isFiltersEmittedFromApp = false;
 
 // ── Live variable detection ─────────────────────────────────────────────────
 // Populated by domo.onVariablesUpdated when App Studio pushes variable state.
@@ -380,14 +296,7 @@ export default function App() {
   const stateDocIdRef = useRef<string | null>(null);
   const selectionModeRef = useRef<SelectionMode>('single');
 
-  const [columns, setColumns] = useState<string[]>([]);
-  const [filterColumn, setFilterColumn] = useState<string>('');
-  const [filterOperator, setFilterOperator] = useState<FilterOperator>('EQUALS');
-  const [filterDataType, setFilterDataType] = useState<FilterDataType>('DATE');
   const [fyStartMonth, setFyStartMonth] = useState<number>(7);
-  const filterColumnRef = useRef<string>('');
-  const filterOperatorRef = useRef<FilterOperator>('EQUALS');
-  const filterDataTypeRef = useRef<FilterDataType>('DATE');
   const fyStartMonthRef = useRef<number>(7);
 
   // Variable emission (drives App Studio variable by name on date pick)
@@ -440,36 +349,10 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      fetchDatasetColumns().then(setColumns);
       await loadSettings();
       await fetchDates();
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // ── onFiltersUpdate: ignore self-echos; hydrate from external filter set ─
-  useEffect(() => {
-    if (IS_LOCAL) return;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (domo as any).onFiltersUpdate((filters: any[]) => {
-        if (isFiltersEmittedFromApp) {
-          isFiltersEmittedFromApp = false;
-          return;
-        }
-        const col = filterColumnRef.current;
-        if (!col || !Array.isArray(filters)) return;
-        const mine = filters.find((f) => f?.column === col);
-        if (!mine || !Array.isArray(mine.values) || mine.values.length === 0) return;
-        const first = String(mine.values[0]);
-        const iso = first.length >= 10 ? first.slice(0, 10) : first;
-        if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
-          setSingleSelected(isoToDate(iso));
-        }
-      });
-    } catch (e) {
-      console.warn('[onFiltersUpdate]', e);
-    }
   }, []);
 
   // ── Settings helpers ─────────────────────────────────────────────────────────
@@ -505,24 +388,15 @@ export default function App() {
         const mode = HIDE_BETWEEN ? 'single' : (c.mode ?? 'single');
         const vm: ViewMode = c.viewMode ?? 'list';
         const df: DateFormat = normalizeFormatPattern(c.dateFormat);
-        const fc = c.filterColumn ?? '';
-        const fo: FilterOperator = c.filterOperator ?? 'EQUALS';
-        const fdt: FilterDataType = c.filterDataType ?? 'DATE';
         const fym: number = c.fyStartMonth ?? 7;
         selectionModeRef.current = mode;
         viewModeRef.current = vm;
         dateFormatRef.current = df;
-        filterColumnRef.current = fc;
-        filterOperatorRef.current = fo;
-        filterDataTypeRef.current = fdt;
         fyStartMonthRef.current = fym;
         setFyStartMonth(fym);
         setSelectionMode(mode);
         setViewMode(vm);
         setDateFormat(df);
-        setFilterColumn(fc);
-        setFilterOperator(fo);
-        setFilterDataType(fdt);
         const vn = c.variableName ?? '';
         const vvm: VarValueMode = c.variableValueMode ?? 'picked';
         variableNameRef.current = vn;
@@ -542,66 +416,13 @@ export default function App() {
             to: s.rangeEnd ? isoToDate(s.rangeEnd) : undefined,
           });
         }
-        rehydrateFilter(s);
+        // Re-drive the variable from the last picked date so cards restore.
+        if (variableNameRef.current && s.singleDate) {
+          emitVariable(isoToDate(s.singleDate));
+        }
       }
     } catch (e) {
       console.warn('[loadSettings]', e);
-    }
-  }
-
-  function buildFilterPayload(values: string[]): Record<string, unknown>[] {
-    const col = filterColumnRef.current;
-    if (!col || values.length === 0) return [];
-    return [
-      {
-        column: col,
-        operator: filterOperatorRef.current,
-        values,
-        dataType: filterDataTypeRef.current,
-      },
-    ];
-  }
-
-  function emitFilter(payload: Record<string, unknown>[]) {
-    if (payload.length === 0) return;
-    if (IS_LOCAL) {
-      console.log('[DEV] emit filterContainer:', payload);
-      return;
-    }
-    isFiltersEmittedFromApp = true;
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (domo as any).filterContainer(payload);
-    } catch (e) {
-      isFiltersEmittedFromApp = false;
-      console.error('[emitFilter]', e);
-    }
-  }
-
-  function rehydrateFilter(s: StateDoc) {
-    if (!filterColumnRef.current) return;
-    if (selectionModeRef.current === 'single' && s.singleDate) {
-      const op = filterOperatorRef.current;
-      const computedStart = computedStartForOp(
-        isoToDate(s.singleDate),
-        op,
-        fyStartMonthRef.current,
-      );
-      if (computedStart) {
-        const prev = op;
-        filterOperatorRef.current = 'BETWEEN';
-        emitFilter(buildFilterPayload([toISO(computedStart), s.singleDate]));
-        filterOperatorRef.current = prev;
-        return;
-      }
-      emitFilter(buildFilterPayload([s.singleDate]));
-    } else if (selectionModeRef.current === 'between' && s.rangeStart) {
-      const from = s.rangeStart;
-      const to = s.rangeEnd ?? s.rangeStart;
-      const prev = filterOperatorRef.current;
-      filterOperatorRef.current = 'BETWEEN';
-      emitFilter(buildFilterPayload([from, to]));
-      filterOperatorRef.current = prev;
     }
   }
 
@@ -611,9 +432,6 @@ export default function App() {
         mode: selectionModeRef.current,
         viewMode: viewModeRef.current,
         dateFormat: dateFormatRef.current,
-        filterColumn: filterColumnRef.current || undefined,
-        filterOperator: filterOperatorRef.current,
-        filterDataType: filterDataTypeRef.current,
         fyStartMonth: fyStartMonthRef.current,
         variableName: variableNameRef.current || undefined,
         variableValueMode: variableValueModeRef.current,
@@ -719,18 +537,14 @@ export default function App() {
       if (stateDocIdRef.current) await collBackend.delete(stateDocIdRef.current);
       configDocIdRef.current = null;
       stateDocIdRef.current = null;
-      filterColumnRef.current = '';
-      filterOperatorRef.current = 'EQUALS';
-      filterDataTypeRef.current = 'DATE';
       variableNameRef.current = '';
       variableValueModeRef.current = 'picked';
+      fyStartMonthRef.current = 7;
       viewModeRef.current = 'list';
       dateFormatRef.current = DEFAULT_FORMAT_PATTERN;
-      setFilterColumn('');
-      setFilterOperator('EQUALS');
-      setFilterDataType('DATE');
       setVariableName('');
       setVariableValueMode('picked');
+      setFyStartMonth(7);
       setViewMode('list');
       setDateFormat(DEFAULT_FORMAT_PATTERN);
       setSingleSelected(undefined);
@@ -883,25 +697,7 @@ export default function App() {
       if (!availableDates.has(iso)) return;
       setSingleSelected(date);
       persistState({ singleDate: iso });
-      // Variable emit runs regardless of filter-column presence — customer's
-      // beast modes may rely on the variable even without a page filter set.
       emitVariable(date);
-      if (!filterColumnRef.current) return;
-      const op = filterOperatorRef.current;
-      // Computed-range ops synthesise a BETWEEN payload with a period-start value.
-      const computedStart = computedStartForOp(date, op, fyStartMonthRef.current);
-      if (computedStart) {
-        const startIso = toISO(computedStart);
-        const prev = op;
-        filterOperatorRef.current = 'BETWEEN';
-        emitFilter(buildFilterPayload([startIso, iso]));
-        filterOperatorRef.current = prev;
-        return;
-      }
-      // Direct-emit ops. Force EQUALS if user picked BETWEEN with a single value.
-      if (op === 'BETWEEN') filterOperatorRef.current = 'EQUALS';
-      emitFilter(buildFilterPayload([iso]));
-      filterOperatorRef.current = op;
     },
     [availableDates]
   );
@@ -911,14 +707,7 @@ export default function App() {
     const from = toISO(rangeSelected.from);
     const to = rangeSelected.to ? toISO(rangeSelected.to) : from;
     persistState({ rangeStart: from, rangeEnd: to });
-    if (!filterColumnRef.current) {
-      console.warn('[applyRange] no filter column configured');
-      return;
-    }
-    const prev = filterOperatorRef.current;
-    filterOperatorRef.current = 'BETWEEN';
-    emitFilter(buildFilterPayload([from, to]));
-    filterOperatorRef.current = prev;
+    if (rangeSelected.to) emitVariable(rangeSelected.to);
   }, [rangeSelected]);
 
   // ── Render ────────────────────────────────────────────────────────────────────
@@ -1016,105 +805,38 @@ export default function App() {
                         <option value="startOfFY">Start of financial year (uses FY month below)</option>
                         <option value="endOfFY">End of financial year</option>
                       </select>
+
+                      {(variableValueMode === 'startOfFY' || variableValueMode === 'endOfFY') && (
+                        <>
+                          <label
+                            className="settings-sublabel"
+                            style={{ display: 'block', marginTop: 8 }}
+                          >
+                            Financial year starts
+                          </label>
+                          <select
+                            className="settings-input"
+                            value={fyStartMonth}
+                            onChange={(e) => {
+                              const v = parseInt(e.target.value, 10);
+                              if (!Number.isFinite(v)) return;
+                              setFyStartMonth(v);
+                              fyStartMonthRef.current = v;
+                              persistSettings({ fyStartMonth: v }, true);
+                            }}
+                          >
+                            {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => (
+                              <option key={m} value={i + 1}>{i + 1} — {m} 1{i === 0 ? ' (Calendar year)' : ''}{i + 1 === 7 ? ' (AU tax year)' : ''}{i + 1 === 10 ? ' (AU marketing FY)' : ''}</option>
+                            ))}
+                          </select>
+                        </>
+                      )}
                     </>
                   )}
                 </>
               );
             })()}
           </div>
-
-          {/* ── Optional: emit a page filter instead of / alongside a variable ── */}
-          <details className="settings-group">
-            <summary className="settings-sublabel" style={{ cursor: 'pointer' }}>
-              Page filter (optional)
-            </summary>
-            <p className="settings-hint">
-              Leave the column blank to skip. Use only if downstream cards filter
-              by a dataset column directly instead of a variable.
-            </p>
-
-            <label className="settings-sublabel">Filter column</label>
-            <select
-              className="settings-input"
-              value={filterColumn}
-              onChange={(e) => {
-                const v = e.target.value;
-                setFilterColumn(v);
-                filterColumnRef.current = v;
-                persistSettings({ filterColumn: v || undefined }, true);
-              }}
-            >
-              <option value="">— none —</option>
-              {columns.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
-
-            {filterColumn && (
-              <>
-                <label className="settings-sublabel" style={{ marginTop: 8 }}>Filter operator</label>
-                <select
-                  className="settings-input"
-                  value={filterOperator}
-                  onChange={(e) => {
-                    const v = e.target.value as FilterOperator;
-                    setFilterOperator(v);
-                    filterOperatorRef.current = v;
-                    persistSettings({ filterOperator: v }, true);
-                  }}
-                >
-                  <optgroup label="Direct">
-                    <option value="EQUALS">EQUALS (single date)</option>
-                    <option value="LESS_THAN_EQUALS_TO">LESS_THAN_EQUALS_TO (through date)</option>
-                    <option value="GREAT_THAN_EQUALS_TO">GREAT_THAN_EQUALS_TO (from date)</option>
-                    <option value="BETWEEN">BETWEEN (range)</option>
-                  </optgroup>
-                  <optgroup label="Computed range (auto-BETWEEN)">
-                    <option value="MTD">MTD — Month to date</option>
-                    <option value="CYTD">CYTD — Calendar year to date</option>
-                    <option value="FYTD">FYTD — Financial year to date</option>
-                  </optgroup>
-                </select>
-
-                {filterOperator === 'FYTD' && (
-                  <>
-                    <label className="settings-sublabel" style={{ marginTop: 8 }}>Financial year starts</label>
-                    <select
-                      className="settings-input"
-                      value={fyStartMonth}
-                      onChange={(e) => {
-                        const v = parseInt(e.target.value, 10);
-                        if (!Number.isFinite(v)) return;
-                        setFyStartMonth(v);
-                        fyStartMonthRef.current = v;
-                        persistSettings({ fyStartMonth: v }, true);
-                      }}
-                    >
-                      {['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'].map((m, i) => (
-                        <option key={m} value={i + 1}>{i + 1} — {m} 1{i === 0 ? ' (Calendar year)' : ''}{i + 1 === 7 ? ' (AU tax year)' : ''}{i + 1 === 10 ? ' (AU marketing FY)' : ''}</option>
-                      ))}
-                    </select>
-                  </>
-                )}
-
-                <label className="settings-sublabel" style={{ marginTop: 8 }}>Data type</label>
-                <select
-                  className="settings-input"
-                  value={filterDataType}
-                  onChange={(e) => {
-                    const v = e.target.value as FilterDataType;
-                    setFilterDataType(v);
-                    filterDataTypeRef.current = v;
-                    persistSettings({ filterDataType: v }, true);
-                  }}
-                >
-                  <option value="DATE">DATE</option>
-                  <option value="STRING">STRING</option>
-                  <option value="NUMERIC">NUMERIC</option>
-                </select>
-              </>
-            )}
-          </details>
 
           <div className="settings-group">
             <label className="settings-sublabel">Default view</label>
@@ -1250,10 +972,10 @@ export default function App() {
             </div>
           </div>
 
-          {!variableName && !filterColumn && (
+          {!variableName && (
             <p className="range-config-warn">
-              ⚠ Nothing configured — set a variable (or a page filter) or date
-              picks won't affect any cards.
+              ⚠ No variable set — type the variable name above so date picks
+              drive your cards.
             </p>
           )}
           <div className="settings-actions">
@@ -1266,9 +988,6 @@ export default function App() {
             <strong>Admin</strong> · Card {CURRENT_CARD_ID.slice(0, 8)}
             {variableName && (
               <> · var=<code>{variableName}</code></>
-            )}
-            {filterColumn && (
-              <> · filter=<code>{filterColumn}</code> {filterOperator}</>
             )}
           </p>
         </div>
@@ -1358,17 +1077,12 @@ export default function App() {
                       ))}
                     </div>
                   )}
-                  {!filterColumn && (
-                    <p className="range-config-warn">
-                      ⚠ No filter column configured. Pick one in the gear panel.
-                    </p>
-                  )}
                   <div className="range-actions">
                     <button
                       className="apply-btn"
                       disabled={!rangeSelected?.from}
                       onClick={applyRange}
-                      title="Emit range filter"
+                      title="Apply range"
                     >
                       Apply
                     </button>
@@ -1384,10 +1098,6 @@ export default function App() {
             </div>
           )}
         </>
-      )}
-
-      {role === 'admin' && !showSettings && !filterColumn && (
-        <p className="warn">⚠ No filter column configured — open settings</p>
       )}
 
       {IS_LOCAL && (
